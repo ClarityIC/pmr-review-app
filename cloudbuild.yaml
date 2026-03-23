@@ -1,0 +1,37 @@
+steps:
+  # Build the Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - build
+      - '-t'
+      - 'us-central1-docker.pkg.dev/cic-prior-records-review/pmr-images/pmr-review-app:$COMMIT_SHA'
+      - '-t'
+      - 'us-central1-docker.pkg.dev/cic-prior-records-review/pmr-images/pmr-review-app:latest'
+      - '.'
+
+  # Push both tags
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - push
+      - '--all-tags'
+      - 'us-central1-docker.pkg.dev/cic-prior-records-review/pmr-images/pmr-review-app'
+
+  # Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - pmr-review-app
+      - '--image=us-central1-docker.pkg.dev/cic-prior-records-review/pmr-images/pmr-review-app:$COMMIT_SHA'
+      - '--region=us-central1'
+      - '--platform=managed'
+      - '--quiet'
+
+images:
+  - 'us-central1-docker.pkg.dev/cic-prior-records-review/pmr-images/pmr-review-app:$COMMIT_SHA'
+  - 'us-central1-docker.pkg.dev/cic-prior-records-review/pmr-images/pmr-review-app:latest'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: E2_HIGHCPU_8
