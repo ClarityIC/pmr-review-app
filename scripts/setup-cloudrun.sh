@@ -147,7 +147,7 @@ gcloud run deploy "${SERVICE}" \
   --cpu=2 \
   --timeout=900 \
   --port=3000 \
-  --set-env-vars="NODE_ENV=production,PORT=3000" \
+  --set-env-vars="NODE_ENV=production" \
   --set-secrets="\
 GOOGLE_CLIENT_ID=pmr-GOOGLE_CLIENT_ID:latest,\
 SESSION_SECRET=pmr-SESSION_SECRET:latest,\
