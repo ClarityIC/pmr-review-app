@@ -1,0 +1,7 @@
+node_modules/
+.git/
+uploads/
+chunks/
+.env
+*.local
+.DS_Store
