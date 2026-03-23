@@ -97,9 +97,12 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
   }, [caseData?.status, id]);
 
   // ── File upload ───────────────────────────────────────────────────────────
-  const handleUpload = async (file: File) => {
-    if (!file.type.includes('pdf')) { addError('Only PDF files are accepted.'); return; }
-    if (file.size > 2 * 1024 * 1024 * 1024) { addError('File exceeds the 2 GB limit.'); return; }
+  const handleUpload = async (files: File[]) => {
+    if (!files.length) return;
+    for (const f of files) {
+      if (!f.type.includes('pdf')) { addError(`"${f.name}" is not a PDF.`); return; }
+      if (f.size > 2 * 1024 * 1024 * 1024) { addError(`"${f.name}" exceeds the 2 GB limit.`); return; }
+    }
 
     setUploading(true);
     setLogs([]);
@@ -107,7 +110,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
 
     try {
       const formData = new FormData();
-      formData.append('file', file);
+      files.forEach(f => formData.append('files', f));
       const res = await fetch(`/api/cases/${id}/upload`, { method: 'POST', body: formData });
       if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Upload failed'); }
 
@@ -115,22 +118,21 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
       setCaseData((prev: any) => prev ? { ...prev, status: 'processing' } : prev);
     } catch (e: any) {
       addError(`Upload failed: ${e.message}`);
-      setUploading(false);
     } finally {
       setUploading(false);
     }
   };
 
   const onFilePick = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) handleUpload(file);
+    const files = Array.from(e.target.files ?? []);
+    if (files.length) handleUpload(files);
     e.target.value = '';
   };
 
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault(); setDragging(false);
-    const file = e.dataTransfer.files[0];
-    if (file) handleUpload(file);
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length) handleUpload(files);
   };
 
   // ── PDF viewer ─────────────────────────────────────────────────────────────
@@ -237,9 +239,9 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                 )}
               >
                 <UploadCloud className={cn('w-12 h-12 mx-auto mb-4', dragging ? 'text-indigo-500' : 'text-slate-400')} />
-                <p className="text-base font-medium text-slate-700 dark:text-slate-300 mb-1">Drop PDF here or click to upload</p>
-                <p className="text-sm text-slate-500">PDF files up to 2 GB · OCR + AI analysis will begin automatically</p>
-                <input ref={fileInputRef} type="file" accept="application/pdf" className="hidden" onChange={onFilePick} />
+                <p className="text-base font-medium text-slate-700 dark:text-slate-300 mb-1">Drop PDF(s) here or click to upload</p>
+                <p className="text-sm text-slate-500">One or more PDF files up to 2 GB each · OCR + AI analysis will begin automatically</p>
+                <input ref={fileInputRef} type="file" accept="application/pdf" multiple className="hidden" onChange={onFilePick} />
               </div>
 
               {hasError && (
@@ -273,9 +275,9 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                 onClick={() => fileInputRef.current?.click()}
                 className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors border border-slate-200 dark:border-slate-700"
               >
-                <RefreshCw className="w-3.5 h-3.5" /> Upload new file
+                <RefreshCw className="w-3.5 h-3.5" /> Upload more files
               </button>
-              <input ref={fileInputRef} type="file" accept="application/pdf" className="hidden" onChange={onFilePick} />
+              <input ref={fileInputRef} type="file" accept="application/pdf" multiple className="hidden" onChange={onFilePick} />
             </div>
           )}
 

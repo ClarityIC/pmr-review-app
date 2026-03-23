@@ -24,7 +24,7 @@ import {
   createCase, getCase, listCases, updateCase, deleteCase,
 } from './server/cases.js';
 import { signedReadUrl, getBucketUsageBytes, listObjects, BUCKET_AUTH, BUCKET_STAGING, BUCKET_OUTPUT } from './server/gcs.js';
-import { pipelineEmitter, runPipeline } from './server/pipeline/orchestrator.js';
+import { pipelineEmitter, runPipeline, FileInput } from './server/pipeline/orchestrator.js';
 import { runPreflight } from './server/preflight.js';
 import { DEFAULT_TABLE1_PROMPT, DEFAULT_TABLE2_PROMPT } from './server/pipeline/prompts.js';
 
@@ -146,24 +146,28 @@ app.delete('/api/cases/:id', async (req: Request, res: Response) => {
 
 // ── File upload → triggers pipeline ─────────────────────────────────────────
 app.post('/api/cases/:id/upload',
-  upload.single('file'),
+  upload.array('files', 20),
   async (req: Request, res: Response) => {
     const caseRecord = await getCase(req.params.id);
     if (!caseRecord) return res.status(404).json({ error: 'Case not found' });
-    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
-    const fileId = uuidv4();
+    const uploadedFiles = req.files as Express.Multer.File[];
+    if (!uploadedFiles?.length) return res.status(400).json({ error: 'No files uploaded' });
+
     const user = (req as any).session.user;
+    const files: FileInput[] = uploadedFiles.map(f => ({
+      fileId: uuidv4(),
+      fileName: f.originalname,
+      localFilePath: f.path,
+    }));
 
     // Respond immediately — pipeline runs async
-    res.status(202).json({ fileId, message: 'Upload accepted — processing started' });
+    res.status(202).json({ fileIds: files.map(f => f.fileId), message: 'Upload accepted — processing started' });
 
     // Fire and forget (logs stream via SSE)
     runPipeline({
       caseId: req.params.id,
-      fileId,
-      fileName: req.file.originalname,
-      localFilePath: req.file.path,
+      files,
       createdBy: user.email,
     }).catch(e => console.error('[server] Pipeline error:', e));
   }
