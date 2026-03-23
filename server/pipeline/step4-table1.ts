@@ -9,6 +9,7 @@ import { getGenAI, getEnv } from '../config.js';
 import { getCaseText } from '../bigquery.js';
 import { DEFAULT_TABLE1_PROMPT } from './prompts.js';
 import { Log } from './orchestrator.js';
+import { parseMarkdownTable } from './table-parser.js';
 
 export async function step4(
   caseId: string,
@@ -49,31 +50,3 @@ export async function step4(
   return { rows, markdownTable };
 }
 
-/**
- * Parse a Markdown table into an array of objects.
- * Handles multi-column tables with pipe delimiters.
- */
-function parseMarkdownTable(md: string): any[] {
-  const lines = md.split('\n').map(l => l.trim()).filter(l => l.startsWith('|'));
-  if (lines.length < 2) return [];
-
-  // First line is headers
-  const headers = lines[0]
-    .split('|')
-    .filter((_, i, a) => i > 0 && i < a.length - 1) // strip leading/trailing pipes
-    .map(h => h.trim());
-
-  // Second line is separator (---)
-  const dataLines = lines.slice(2);
-
-  return dataLines.map(line => {
-    const cells = line
-      .split('|')
-      .filter((_, i, a) => i > 0 && i < a.length - 1)
-      .map(c => c.trim());
-
-    const row: Record<string, string> = {};
-    headers.forEach((h, i) => { row[h] = cells[i] ?? ''; });
-    return row;
-  });
-}

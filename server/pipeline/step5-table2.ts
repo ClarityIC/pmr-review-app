@@ -8,6 +8,7 @@ import { getGenAI, getEnv } from '../config.js';
 import { getCaseText } from '../bigquery.js';
 import { DEFAULT_TABLE2_PROMPT } from './prompts.js';
 import { Log } from './orchestrator.js';
+import { parseMarkdownTable } from './table-parser.js';
 
 export async function step5(
   caseId: string,
@@ -49,22 +50,3 @@ export async function step5(
   return { rows, markdownTable };
 }
 
-function parseMarkdownTable(md: string): any[] {
-  const lines = md.split('\n').map(l => l.trim()).filter(l => l.startsWith('|'));
-  if (lines.length < 2) return [];
-
-  const headers = lines[0]
-    .split('|')
-    .filter((_, i, a) => i > 0 && i < a.length - 1)
-    .map(h => h.trim());
-
-  return lines.slice(2).map(line => {
-    const cells = line
-      .split('|')
-      .filter((_, i, a) => i > 0 && i < a.length - 1)
-      .map(c => c.trim());
-    const row: Record<string, string> = {};
-    headers.forEach((h, i) => { row[h] = cells[i] ?? ''; });
-    return row;
-  });
-}

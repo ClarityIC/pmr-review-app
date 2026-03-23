@@ -63,6 +63,9 @@ export async function runPipeline(opts: RunOptions): Promise<void> {
   }
   activeRuns.add(caseId);
 
+  // Track which temp files still need cleanup (removed inline after each step3)
+  const pendingCleanup = new Set(files.map(f => f.localFilePath));
+
   const log: Log = (level, message) => emitLog(caseId, level, message);
 
   try {
@@ -104,6 +107,7 @@ export async function runPipeline(opts: RunOptions): Promise<void> {
 
       // Clean up local temp file immediately — GCS is now the only copy
       try { unlinkSync(localFilePath); } catch {}
+      pendingCleanup.delete(localFilePath);
     }
 
     // ── Step 4: Table 1 generation (whole case) ───────────────────────────────
@@ -141,5 +145,9 @@ export async function runPipeline(opts: RunOptions): Promise<void> {
     await updateCase(caseId, { status: 'error', errorMessage: msg }).catch(() => {});
   } finally {
     activeRuns.delete(caseId);
+    // Clean up any temp files that weren't removed inline (e.g. pipeline failed before step 3)
+    for (const p of pendingCleanup) {
+      try { unlinkSync(p); } catch {}
+    }
   }
 }
