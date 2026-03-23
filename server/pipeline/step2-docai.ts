@@ -45,9 +45,12 @@ export async function step2(
   const layoutOutputPrefix = `cases/${caseId}/${fileId}/layout-output/`;
 
   // Build input documents list (all chunk GCS URIs)
-  const inputDocuments = chunks.map(c => ({
-    gcsDocument: { gcsUri: c.gcsUri, mimeType: 'application/pdf' },
-  }));
+  // BatchDocumentsInputConfig requires gcsDocuments.documents[]; items are {gcsUri, mimeType}
+  const inputDocuments = {
+    gcsDocuments: {
+      documents: chunks.map(c => ({ gcsUri: c.gcsUri, mimeType: 'application/pdf' })),
+    },
+  };
 
   // ── Launch both LROs concurrently ─────────────────────────────────────────
   log('info', `[Step 2] Submitting ${chunks.length} chunks to OCR processor`);
@@ -57,7 +60,7 @@ export async function step2(
 
   const [ocrOp] = await docai.batchProcessDocuments({
     name: ocrProcessorName,
-    inputDocuments: { documents: inputDocuments } as any,
+    inputDocuments,
     documentOutputConfig: {
       gcsOutputConfig: { gcsUri: `gs://${outputBucket}/${ocrOutputPrefix}` },
     },
@@ -66,7 +69,7 @@ export async function step2(
 
   const [layoutOp] = await docai.batchProcessDocuments({
     name: layoutProcessorName,
-    inputDocuments: { documents: inputDocuments } as any,
+    inputDocuments,
     documentOutputConfig: {
       gcsOutputConfig: { gcsUri: `gs://${outputBucket}/${layoutOutputPrefix}` },
     },
