@@ -11,10 +11,15 @@ REGION=us-central1
 SERVICE=pmr-review-app
 REPO=pmr-images
 IMAGE="${REGION}-docker.pkg.dev/${PROJECT}/${REPO}/${SERVICE}"
-CLOUD_BUILD_SA="${PROJECT}@cloudbuild.gserviceaccount.com"
 
 echo "==> Setting project..."
 gcloud config set project "${PROJECT}"
+
+# Get project number (Cloud Build SA uses number, not ID)
+PROJECT_NUMBER=$(gcloud projects describe "${PROJECT}" --format="value(projectNumber)")
+CLOUD_BUILD_SA="${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com"
+echo "    Project number: ${PROJECT_NUMBER}"
+echo "    Cloud Build SA: ${CLOUD_BUILD_SA}"
 
 # ---------------------------------------------------------------------------
 # 1. Enable required APIs
@@ -26,6 +31,17 @@ gcloud services enable \
   artifactregistry.googleapis.com \
   secretmanager.googleapis.com \
   --project="${PROJECT}"
+
+# Wait for the Cloud Build SA to be provisioned (created automatically after API enable)
+echo "==> Waiting for Cloud Build service account to be provisioned..."
+for i in $(seq 1 12); do
+  if gcloud iam service-accounts describe "${CLOUD_BUILD_SA}" --project="${PROJECT}" &>/dev/null; then
+    echo "    Cloud Build SA is ready."
+    break
+  fi
+  echo "    Not ready yet, waiting 10 seconds... (attempt ${i}/12)"
+  sleep 10
+done
 
 # ---------------------------------------------------------------------------
 # 2. Create Artifact Registry repository
@@ -95,10 +111,12 @@ store_secret() {
 }
 
 # Parse .env and store each var (skip comments, blank lines, NODE_ENV, PORT)
-while IFS='=' read -r key rest; do
-  [[ -z "${key}" || "${key}" == \#* ]] && continue
-  value="${rest}"
-  # Skip vars that should not go to Secret Manager
+# Use grep+sed to correctly handle values that contain '=' (e.g. GCP_SA_KEY JSON)
+while IFS= read -r line; do
+  [[ -z "${line}" || "${line}" == \#* ]] && continue
+  key="${line%%=*}"
+  value="${line#*=}"
+  [[ -z "${key}" ]] && continue
   [[ "${key}" == "NODE_ENV" ]] && continue
   [[ "${key}" == "PORT" ]] && continue
   store_secret "pmr-${key}" "${value}"
