@@ -74,7 +74,8 @@ app.use(helmet({
 app.use(cors({ origin: false }));
 app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 500, standardHeaders: true, legacyHeaders: false }));
 
-app.use(cookieParser());
+const COOKIE_SECRET = getEnv('SESSION_SECRET') || 'dev-secret-change-me';
+app.use(cookieParser(COOKIE_SECRET));
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
 
@@ -117,7 +118,7 @@ app.post('/api/cases', async (req: Request, res: Response) => {
     if (!patientName?.trim() || !dateOfInjury?.trim()) {
       return res.status(400).json({ error: 'patientName and dateOfInjury are required' });
     }
-    const user = (req as any).session.user;
+    const user = (req as any).user;
     const caseRecord = await createCase(patientName.trim(), dateOfInjury.trim(), user.email);
     res.status(201).json({ case: caseRecord });
   } catch (e: any) {
@@ -154,7 +155,7 @@ app.post('/api/cases/:id/upload',
     const uploadedFiles = req.files as Express.Multer.File[];
     if (!uploadedFiles?.length) return res.status(400).json({ error: 'No files uploaded' });
 
-    const user = (req as any).session.user;
+    const user = (req as any).user;
     const files: FileInput[] = uploadedFiles.map(f => ({
       fileId: uuidv4(),
       fileName: f.originalname,

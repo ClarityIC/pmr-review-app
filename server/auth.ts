@@ -1,7 +1,11 @@
 /**
  * Google OAuth 2.0 authentication routes.
- * Uses redirect mode (no popups) with HttpOnly session cookies.
+ * Uses redirect mode (no popups) with a signed HttpOnly cookie.
  * Restricts access to @clarityic.com accounts only.
+ *
+ * Auth is stateless — user identity is stored in a signed cookie (pmr_auth),
+ * not in a server-side session. This works correctly on Cloud Run where
+ * requests may be routed across multiple instances.
  */
 import { Router, Request, Response } from 'express';
 import { OAuth2Client } from 'google-auth-library';
@@ -10,6 +14,7 @@ import { getEnv } from './config.js';
 export const authRouter = Router();
 
 const ALLOWED_DOMAIN = 'clarityic.com';
+const IS_PROD = process.env.NODE_ENV === 'production';
 
 function getOAuthClient() {
   return new OAuth2Client(getEnv('GOOGLE_CLIENT_ID'));
@@ -17,11 +22,12 @@ function getOAuthClient() {
 
 /** Check current session — called on frontend mount. */
 authRouter.get('/me', (req: Request, res: Response) => {
-  const session = (req as any).session;
-  if (session?.user) {
-    res.json({ user: session.user });
-  } else {
-    res.status(401).json({ error: 'Not authenticated' });
+  const raw = (req as any).signedCookies?.pmr_auth;
+  if (!raw) return res.status(401).json({ error: 'Not authenticated' });
+  try {
+    res.json({ user: JSON.parse(raw) });
+  } catch {
+    res.status(401).json({ error: 'Invalid session' });
   }
 });
 
@@ -50,11 +56,17 @@ authRouter.post('/google-redirect', async (req: Request, res: Response) => {
       return res.redirect(`/?error=${encodeURIComponent(`Access restricted to @${ALLOWED_DOMAIN} accounts.`)}`);
     }
 
-    (req as any).session.user = {
+    res.cookie('pmr_auth', JSON.stringify({
       email,
       name: payload.name || email,
       picture: payload.picture || null,
-    };
+    }), {
+      signed: true,
+      httpOnly: true,
+      secure: IS_PROD,
+      sameSite: 'lax',
+      maxAge: 7 * 24 * 60 * 60 * 1000,  // 7 days
+    });
 
     console.log(`[auth] Login: ${email}`);
     res.redirect('/cases');
@@ -65,15 +77,21 @@ authRouter.post('/google-redirect', async (req: Request, res: Response) => {
 });
 
 authRouter.post('/logout', (req: Request, res: Response) => {
-  const email = (req as any).session?.user?.email;
-  (req as any).session.destroy(() => {
-    console.log(`[auth] Logout: ${email}`);
-    res.json({ ok: true });
-  });
+  const raw = (req as any).signedCookies?.pmr_auth;
+  const email = raw ? JSON.parse(raw)?.email : 'unknown';
+  console.log(`[auth] Logout: ${email}`);
+  res.clearCookie('pmr_auth');
+  res.json({ ok: true });
 });
 
 /** Express middleware to require an authenticated session on API routes. */
 export function requireAuth(req: Request, res: Response, next: Function) {
-  if ((req as any).session?.user) return next();
-  res.status(401).json({ error: 'Authentication required' });
+  const raw = (req as any).signedCookies?.pmr_auth;
+  if (!raw) return res.status(401).json({ error: 'Authentication required' });
+  try {
+    (req as any).user = JSON.parse(raw);
+    next();
+  } catch {
+    res.status(401).json({ error: 'Invalid session' });
+  }
 }

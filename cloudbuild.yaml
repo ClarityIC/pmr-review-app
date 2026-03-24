@@ -3,6 +3,8 @@ steps:
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - build
+      - '--build-arg'
+      - 'GOOGLE_CLIENT_ID=643927424109-fapdkevkh88tobt5mti3cpbie212riva.apps.googleusercontent.com'
       - '-t'
       - 'us-central1-docker.pkg.dev/cic-prior-records-review/pmr-images/pmr-review-app:$COMMIT_SHA'
       - '-t'

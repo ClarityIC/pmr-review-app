@@ -9,7 +9,10 @@ export default defineConfig(({ mode }) => {
     plugins: [react(), tailwindcss()],
     define: {
       // Only the OAuth client ID is public — never expose GCP_SA_KEY here
-      'import.meta.env.VITE_GOOGLE_CLIENT_ID': JSON.stringify(env.GOOGLE_CLIENT_ID || ''),
+      // Falls back to process.env so Docker --build-arg GOOGLE_CLIENT_ID=... works
+      'import.meta.env.VITE_GOOGLE_CLIENT_ID': JSON.stringify(
+        env.GOOGLE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID || ''
+      ),
     },
     resolve: {
       alias: { '@': path.resolve(__dirname, '.') },

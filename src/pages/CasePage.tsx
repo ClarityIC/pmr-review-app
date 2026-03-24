@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   UploadCloud, Loader2, Download, ChevronLeft, ChevronRight, X,
-  PanelRightClose, PanelRightOpen, FileText, RefreshCw, AlertCircle,
+  PanelRightClose, PanelRightOpen, FileText, RefreshCw, AlertCircle, CheckCircle2,
 } from 'lucide-react';
 import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
@@ -52,6 +52,9 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
   const [t2Sort, setT2Sort] = useState<SortConfig>({ key: '', direction: null });
   const [t2Filters, setT2Filters] = useState<FilterConfig>({});
 
+  // Success toast
+  const [successToast, setSuccessToast] = useState<string | null>(null);
+
   // PDF Viewer
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [pdfName, setPdfName] = useState('');
@@ -87,7 +90,13 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
       setLogs(prev => [...prev, entry]);
 
       // Reload case data when processing finishes
-      if (entry.message.includes('Pipeline complete') || entry.level === 'error') {
+      if (entry.message.includes('Pipeline complete')) {
+        setTimeout(loadCase, 1500);
+        setTimeout(() => {
+          setSuccessToast(caseData?.patientName || 'The report');
+        }, 2000);
+        es.close();
+      } else if (entry.level === 'error') {
         setTimeout(loadCase, 1500);
         es.close();
       }
@@ -203,6 +212,24 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col">
       <NavBar user={user} onLogout={onLogout} darkMode={darkMode} onToggleDark={onToggleDark} />
 
+      {/* Success toast — persists until dismissed */}
+      <AnimatePresence>
+        {successToast && (
+          <motion.div
+            initial={{ opacity: 0, y: 24 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 24 }}
+            className="fixed bottom-6 right-6 z-50 flex items-start gap-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl shadow-lg px-4 py-3 max-w-sm"
+          >
+            <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />
+            <p className="text-sm font-medium flex-1">The report for <span className="font-semibold">{successToast}</span> is ready for review.</p>
+            <button onClick={() => setSuccessToast(null)} className="text-emerald-400 hover:text-emerald-600 transition-colors shrink-0">
+              <X className="w-4 h-4" />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Page header */}
       <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-6 py-3 flex items-center gap-4">
         <button onClick={() => navigate('/cases')} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors">
@@ -263,7 +290,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
               <Loader2 className="w-10 h-10 text-indigo-500 animate-spin" />
               <div className="text-center">
                 <p className="text-base font-semibold text-slate-900 dark:text-slate-100">Processing records…</p>
-                <p className="text-sm text-slate-500 mt-1">This may take several minutes for large files. Watch the log below.</p>
+                <p className="text-sm text-slate-500 mt-1">This may take up to 2 hours, depending on network traffic on the OCR server.</p>
               </div>
             </div>
           )}

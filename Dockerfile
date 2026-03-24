@@ -1,4 +1,7 @@
 FROM node:22-slim AS builder
+# GOOGLE_CLIENT_ID is public (OAuth client ID) — baked into the frontend bundle at build time
+ARG GOOGLE_CLIENT_ID
+ENV GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci

@@ -60,9 +60,9 @@ describe('test PDF prerequisites', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// TEST: Single-file pipeline (Prior Records — 80 pages)
+// TEST: Single-file pipeline (Initial Exam — 27 pages, faster than prior records)
 // ─────────────────────────────────────────────────────────────────────────────
-describe('single-file pipeline (prior records)', () => {
+describe('single-file pipeline (initial exam)', () => {
   it(
     'runs all 5 steps and produces a complete case with non-empty tables',
     async () => {
@@ -78,7 +78,7 @@ describe('single-file pipeline (prior records)', () => {
       const fileId = uuidv4();
       await runPipeline({
         caseId,
-        files: [{ fileId, fileName: 'prior-records.pdf', localFilePath: tempCopy(PDF_PRIOR_RECORDS) }],
+        files: [{ fileId, fileName: 'initial-exam.pdf', localFilePath: tempCopy(PDF_INITIAL_EXAM) }],
         createdBy: 'test@clarityic.com',
       });
 
@@ -93,7 +93,7 @@ describe('single-file pipeline (prior records)', () => {
 
       // 5. File should be registered
       expect(result!.files).toHaveLength(1);
-      expect(result!.files[0].name).toBe('prior-records.pdf');
+      expect(result!.files[0].name).toBe('initial-exam.pdf');
       expect(result!.files[0].sizeBytes).toBeGreaterThan(0);
 
       // 6. BigQuery Table 0 should have rows for this case
@@ -137,7 +137,7 @@ describe('single-file pipeline (prior records)', () => {
       const t2Keys = Object.keys(t2Row);
       expect(t2Keys.length).toBeGreaterThan(0);
     },
-    { timeout: 15 * 60 * 1000 }, // 15 minutes
+    { timeout: 25 * 60 * 1000 }, // 25 minutes (Layout Parser on 27-page PDF)
   );
 });
 
@@ -188,7 +188,7 @@ describe('multi-file pipeline (two PDFs)', () => {
       // Verify by checking dateProcessed is a single timestamp
       expect(result!.dateProcessed).not.toBeNull();
     },
-    { timeout: 25 * 60 * 1000 }, // 25 minutes for two files
+    { timeout: 55 * 60 * 1000 }, // 55 minutes for two files (80-page prior records is slow)
   );
 });
 
@@ -233,7 +233,7 @@ describe('subsequent upload to an existing complete case', () => {
       expect(afterSecond!.table1.length).toBeGreaterThanOrEqual(table1CountAfterFirst);
       expect(afterSecond!.table2.length).toBeGreaterThan(0);
     },
-    { timeout: 30 * 60 * 1000 }, // 30 minutes
+    { timeout: 55 * 60 * 1000 }, // 55 minutes (two full pipeline runs)
   );
 });
 
@@ -274,7 +274,7 @@ describe('concurrent upload guard', () => {
       // Only the first pipeline's file should be registered (the duplicate was dropped)
       expect(result!.files).toHaveLength(1);
     },
-    { timeout: 15 * 60 * 1000 },
+    { timeout: 25 * 60 * 1000 }, // 25 minutes
   );
 });
 

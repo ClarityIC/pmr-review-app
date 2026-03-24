@@ -1,5 +1,23 @@
 @import "tailwindcss";
 
+/* Class-based dark mode (Tailwind v4 requires explicit declaration) */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Brand color — overrides Tailwind's indigo with #1985d2 blue */
+@theme {
+  --color-indigo-50:  #edf6fc;
+  --color-indigo-100: #cce5f7;
+  --color-indigo-200: #99cef1;
+  --color-indigo-300: #60b4e9;
+  --color-indigo-400: #2d9bde;
+  --color-indigo-500: #1990d6;
+  --color-indigo-600: #1985d2;
+  --color-indigo-700: #136bac;
+  --color-indigo-800: #0e5080;
+  --color-indigo-900: #0a3555;
+  --color-indigo-950: #061e30;
+}
+
 @layer base {
   html {
     -webkit-font-smoothing: antialiased;

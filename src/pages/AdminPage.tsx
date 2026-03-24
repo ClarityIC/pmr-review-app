@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import NavBar from '../components/NavBar.js';
 import { User } from '../main.js';
-import { cn, formatBytes, formatDate } from '../lib/utils.js';
+import { cn, formatBytes, formatDate, formatDateTime } from '../lib/utils.js';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface Props {
@@ -297,13 +297,20 @@ function PromptsTab({ addError }: { addError: (m: string) => void }) {
                 {historyOpen && (
                   <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
                     className="absolute top-full mt-1 left-0 w-96 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl z-20 overflow-hidden">
-                    {history.map((h, i) => (
-                      <button key={i} onClick={() => loadHistoryEntry(h)}
-                        className="w-full text-left px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-700 border-b border-slate-100 dark:border-slate-700 last:border-0 transition-colors">
-                        <div className="text-xs text-slate-500 mb-1">{formatDate(h.savedAt)}</div>
-                        <div className="text-xs text-slate-700 dark:text-slate-300 truncate">{h.prompt.slice(0, 80)}…</div>
-                      </button>
-                    ))}
+                    {history.map((h, i) => {
+                      const isCurrent = h.prompt === savedPrompt;
+                      return (
+                        <button key={i} onClick={() => loadHistoryEntry(h)}
+                          className="w-full text-left px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-700 border-b border-slate-100 dark:border-slate-700 last:border-0 transition-colors">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-slate-500">{formatDateTime(h.savedAt)}</span>
+                            {isCurrent && (
+                              <span className="text-[10px] font-semibold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/30 px-1.5 py-0.5 rounded-full">Current</span>
+                            )}
+                          </div>
+                        </button>
+                      );
+                    })}
                   </motion.div>
                 )}
               </AnimatePresence>
