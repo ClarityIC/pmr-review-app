@@ -28,8 +28,17 @@ pipelineEmitter.setMaxListeners(100);
 // Track active runs for deduplication — keyed by caseId
 const activeRuns = new Set<string>();
 
+// In-memory log buffer — replayed to reconnecting SSE clients
+const logBuffers = new Map<string, Array<{ level: LogLevel; message: string; timestamp: string }>>();
+
+export function getLogBuffer(caseId: string) {
+  return logBuffers.get(caseId) ?? [];
+}
+
 export function emitLog(caseId: string, level: LogLevel, message: string) {
   const entry = { level, message, timestamp: new Date().toISOString() };
+  if (!logBuffers.has(caseId)) logBuffers.set(caseId, []);
+  logBuffers.get(caseId)!.push(entry);
   pipelineEmitter.emit(`log:${caseId}`, entry);
   const prefix = level === 'error' ? '✗' : level === 'success' ? '✓' : level === 'warn' ? '⚠' : '·';
   console.log(`[pipeline:${caseId.slice(0, 8)}] ${prefix} ${message}`);
@@ -62,6 +71,7 @@ export async function runPipeline(opts: RunOptions): Promise<void> {
     return;
   }
   activeRuns.add(caseId);
+  logBuffers.delete(caseId); // clear any previous run's buffer
 
   // Track which temp files still need cleanup (removed inline after each step3)
   const pendingCleanup = new Set(files.map(f => f.localFilePath));

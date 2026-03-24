@@ -24,7 +24,7 @@ import {
   createCase, getCase, listCases, updateCase, deleteCase,
 } from './server/cases.js';
 import { signedReadUrl, getBucketUsageBytes, listObjects, BUCKET_AUTH, BUCKET_STAGING, BUCKET_OUTPUT } from './server/gcs.js';
-import { pipelineEmitter, runPipeline, FileInput } from './server/pipeline/orchestrator.js';
+import { pipelineEmitter, getLogBuffer, runPipeline, FileInput } from './server/pipeline/orchestrator.js';
 import { runPreflight } from './server/preflight.js';
 import { DEFAULT_TABLE1_PROMPT, DEFAULT_TABLE2_PROMPT } from './server/pipeline/prompts.js';
 
@@ -186,7 +186,14 @@ app.get('/api/cases/:id/logs', (req: Request, res: Response) => {
     res.write(`data: ${JSON.stringify(entry)}\n\n`);
   };
 
+  // Attach handler first so no live events are missed during replay
   pipelineEmitter.on(`log:${id}`, handler);
+
+  // Replay buffered entries so reconnecting clients see the full log history
+  for (const entry of getLogBuffer(id)) {
+    res.write(`data: ${JSON.stringify(entry)}\n\n`);
+  }
+
   req.on('close', () => { pipelineEmitter.off(`log:${id}`, handler); });
 });
 
