@@ -2,7 +2,7 @@
  * STEP 1: Persistent Storage, Algorithmic Segmentation, and Ephemeral Staging
  *
  * 1. Upload original PDF to cic-authoritative-case-files (permanent copy).
- * 2. Use pdf-lib to split into ≤500-page chunks.
+ * 2. Use pdf-lib to split into chunks (≤15 pages for Path 1 sync, ≤500 pages for Path 2 async).
  * 3. Track absolute_page_offset for each chunk (non-negotiable for Step 3 reassembly).
  * 4. Upload chunks to cic-docai-staging-inputs.
  */
@@ -13,7 +13,9 @@ import { v4 as uuidv4 } from 'uuid';
 import { uploadFile, uploadBuffer, BUCKET_AUTH, BUCKET_STAGING } from '../gcs.js';
 import { Log } from './orchestrator.js';
 
-export const CHUNK_SIZE = 500; // pages — Document AI batchProcess limit
+export type ProcessingPath = 'path1-sync' | 'path2-async';
+export const CHUNK_SIZE_SYNC  = 15;   // Path 1: ≤15 pages per chunk (sync processDocument limit)
+export const CHUNK_SIZE_ASYNC = 500;  // Path 2: ≤500 pages per chunk (async batchProcess limit)
 
 export interface ChunkRef {
   chunkId: string;
@@ -36,6 +38,7 @@ export async function step1(
   caseId: string,
   fileId: string,
   fileName: string,
+  processingPath: ProcessingPath,
   log: Log,
 ): Promise<Step1Result> {
   log('info', `[Step 1] Starting upload + chunking: ${fileName}`);
@@ -54,7 +57,10 @@ export async function step1(
 
   if (totalPages === 0) throw new Error('PDF has 0 pages — cannot process.');
 
-  // ── 3. Chunk into ≤500-page segments ─────────────────────────────────────
+  // ── 3. Chunk into path-dependent page segments ────────────────────────────
+  const chunkSize = processingPath === 'path1-sync' ? CHUNK_SIZE_SYNC : CHUNK_SIZE_ASYNC;
+  log('info', `[Step 1] Processing path: ${processingPath} — chunk size: ${chunkSize} pages`);
+
   const chunks: ChunkRef[] = [];
   const gcsPrefix = `cases/${caseId}/${fileId}/chunks`;
   const tmpDir = path.join(process.cwd(), 'chunks', caseId, fileId);
@@ -64,7 +70,7 @@ export async function step1(
   let chunkIndex = 0;
 
   while (pageOffset < totalPages) {
-    const endPage = Math.min(pageOffset + CHUNK_SIZE, totalPages);
+    const endPage = Math.min(pageOffset + chunkSize, totalPages);
     const pageCount = endPage - pageOffset;
 
     // Create a new PDF with just these pages

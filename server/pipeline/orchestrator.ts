@@ -8,9 +8,11 @@
  * can show real-time progress in the log drawer.
  */
 import { EventEmitter } from 'events';
-import { statSync, unlinkSync } from 'fs';
+import { statSync, unlinkSync, readFileSync } from 'fs';
+import { PDFDocument } from 'pdf-lib';
 import { FieldValue } from '@google-cloud/firestore';
 import { step1 } from './step1-chunk.js';
+import type { ProcessingPath } from './step1-chunk.js';
 import { step2 } from './step2-docai.js';
 import { step3 } from './step3-reassemble.js';
 import { step4 } from './step4-table1.js';
@@ -133,6 +135,24 @@ export async function runPipeline(opts: RunOptions): Promise<void> {
       await deleteCaseRows(caseId);
     }
 
+    // ── Pre-scan total pages to determine processing path ─────────────────────
+    let totalPages = 0;
+    for (const f of files) {
+      const bytes = readFileSync(f.localFilePath);
+      const pdf = await PDFDocument.load(bytes, { ignoreEncryption: true });
+      totalPages += pdf.getPageCount();
+    }
+    const totalSizeMB = files.reduce((sum, f) => sum + statSync(f.localFilePath).size, 0) / (1024 * 1024);
+    const estChunkMB  = totalPages > 0 ? (totalSizeMB / totalPages) * 15 : 0;
+    const processingPath: ProcessingPath =
+      totalPages <= 150 && estChunkMB <= 40 ? 'path1-sync' : 'path2-async';
+    log(
+      'info',
+      `Total pages: ${totalPages} → ${processingPath === 'path1-sync'
+        ? 'Path 1 (synchronous — fast)'
+        : 'Path 2 (async LRO)'}`,
+    );
+
     // ── Steps 1–3: Per-file ingestion ─────────────────────────────────────────
     for (let i = 0; i < files.length; i++) {
       const { fileId, fileName, localFilePath } = files[i];
@@ -140,7 +160,7 @@ export async function runPipeline(opts: RunOptions): Promise<void> {
 
       // Step 1: Upload original + chunk
       if (isCancelled()) throw new Error('Processing was cancelled.');
-      const step1Result = await step1(localFilePath, caseId, fileId, fileName, log);
+      const step1Result = await step1(localFilePath, caseId, fileId, fileName, processingPath, log);
 
       // Register the file in Firestore now that it's safely in GCS
       await addFileToCase(caseId, {
@@ -152,9 +172,9 @@ export async function runPipeline(opts: RunOptions): Promise<void> {
         uploadedAt: new Date().toISOString(),
       });
 
-      // Step 2: Dual Document AI batch processing
+      // Step 2: Dual Document AI processing (sync or async depending on processingPath)
       if (isCancelled()) throw new Error('Processing was cancelled.');
-      const step2Result = await step2(step1Result.chunks, caseId, fileId, log, {
+      const step2Result = await step2(step1Result.chunks, caseId, fileId, processingPath, log, {
         isCancelled,
         onLROsStarted: (names) => activeLRONames.set(caseId, names),
       });
