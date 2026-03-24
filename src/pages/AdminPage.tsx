@@ -415,7 +415,6 @@ function OcrRequestsTab({ addError }: { addError: (m: string) => void }) {
   const [cancelResult, setCancelResult] = useState<{
     cancelledLROs: number;
     cancelledCases: number;
-    lroError: string | null;
   } | null>(null);
 
   const checkStatus = async () => {
@@ -507,11 +506,6 @@ function OcrRequestsTab({ addError }: { addError: (m: string) => void }) {
                         : `${status.processingCases.length} case${status.processingCases.length !== 1 ? 's' : ''} currently processing`}
                     </p>
                   )}
-                  {status.lroError && (
-                    <p className="text-xs text-slate-400 mt-0.5">
-                      (DocAI operations API unavailable — showing Firestore case status only)
-                    </p>
-                  )}
                 </div>
               </div>
             </div>
@@ -599,9 +593,6 @@ function OcrRequestsTab({ addError }: { addError: (m: string) => void }) {
               )}
               {cancelResult.cancelledLROs === 0 && cancelResult.cancelledCases === 0 && (
                 <p className="text-slate-600 dark:text-slate-300">No active operations found.</p>
-              )}
-              {cancelResult.lroError && (
-                <p className="text-xs text-slate-400 mt-0.5">(DocAI operations API unavailable — in-memory pipelines cancelled via internal tracker)</p>
               )}
             </div>
           </div>
