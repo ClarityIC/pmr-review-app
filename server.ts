@@ -19,7 +19,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 import { authRouter, requireAuth } from './server/auth.js';
-import { getEnv } from './server/config.js';
+import { getEnv, getDocAI, getGcpProjectId } from './server/config.js';
 import {
   createCase, getCase, listCases, updateCase, deleteCase,
 } from './server/cases.js';
@@ -309,6 +309,82 @@ app.get('/api/admin/storage', async (_req: Request, res: Response) => {
       ],
       totalBytes: authBytes + stagingBytes + outputBytes,
     });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Admin: DocAI operations monitor ──────────────────────────────────────────
+app.get('/api/admin/docai/operations', async (_req: Request, res: Response) => {
+  try {
+    const docai = getDocAI();
+    const projectId = getGcpProjectId();
+
+    // List pending LROs directly from DocAI
+    let pendingOperations: { name: string; state: string }[] = [];
+    let lroError: string | null = null;
+    try {
+      const [allOps] = await (docai.operationsClient as any).listOperations({
+        name: `projects/${projectId}/locations/us`,
+        pageSize: 100,
+      });
+      pendingOperations = (allOps || [])
+        .filter((op: any) => !op.done)
+        .map((op: any) => ({
+          name: op.name as string,
+          state: op.metadata?.commonMetadata?.state || op.metadata?.state || 'RUNNING',
+        }));
+    } catch (e: any) {
+      lroError = e.message;
+    }
+
+    // Firestore: cases currently marked 'processing'
+    const cases = await listCases();
+    const processingCases = cases
+      .filter(c => c.status === 'processing')
+      .map(c => ({ id: c.id, patientName: c.patientName }));
+
+    res.json({ pendingOperations, pendingCount: pendingOperations.length, processingCases, lroError });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/admin/docai/cancel-all', async (_req: Request, res: Response) => {
+  try {
+    const docai = getDocAI();
+    const projectId = getGcpProjectId();
+
+    // Cancel all pending DocAI LROs
+    let cancelledLROs = 0;
+    let lroError: string | null = null;
+    try {
+      const [allOps] = await (docai.operationsClient as any).listOperations({
+        name: `projects/${projectId}/locations/us`,
+        pageSize: 100,
+      });
+      const pending = (allOps || []).filter((op: any) => !op.done);
+      await Promise.all(
+        pending.map((op: any) =>
+          (docai.operationsClient as any).cancelOperation({ name: op.name }).catch(() => {}),
+        ),
+      );
+      cancelledLROs = pending.length;
+    } catch (e: any) {
+      lroError = e.message;
+    }
+
+    // Revert all processing cases to 'draft' and cancel in-memory pipelines
+    const cases = await listCases();
+    const processingCases = cases.filter(c => c.status === 'processing');
+    await Promise.all(
+      processingCases.map(async c => {
+        await cancelPipeline(c.id);
+        await updateCase(c.id, { status: 'draft' });
+      }),
+    );
+
+    res.json({ cancelledLROs, cancelledCases: processingCases.length, lroError });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }

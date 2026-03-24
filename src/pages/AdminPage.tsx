@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   ChevronLeft, RefreshCw, Loader2, CheckCircle, XCircle, AlertTriangle,
   Database, HardDrive, ChevronDown, Download, Save, Clock,
+  ScanSearch, StopCircle, CheckCircle2, AlertCircle,
 } from 'lucide-react';
 import NavBar from '../components/NavBar.js';
 import { User } from '../main.js';
@@ -15,7 +16,7 @@ interface Props {
   addError: (msg: string) => void;
 }
 
-type Tab = 'workflow' | 'storage' | 'prompts' | 'preflight';
+type Tab = 'workflow' | 'storage' | 'prompts' | 'preflight' | 'ocr';
 
 export default function AdminPage({ user, onLogout, darkMode, onToggleDark, addError }: Props) {
   const navigate = useNavigate();
@@ -26,6 +27,7 @@ export default function AdminPage({ user, onLogout, darkMode, onToggleDark, addE
     { key: 'storage',   label: 'Storage Monitor' },
     { key: 'prompts',   label: 'Prompt Editor' },
     { key: 'preflight', label: 'Preflight & Logs' },
+    { key: 'ocr',       label: 'OCR Requests' },
   ];
 
   return (
@@ -65,6 +67,7 @@ export default function AdminPage({ user, onLogout, darkMode, onToggleDark, addE
         {tab === 'storage'   && <StorageTab addError={addError} />}
         {tab === 'prompts'   && <PromptsTab addError={addError} />}
         {tab === 'preflight' && <PreflightTab addError={addError} />}
+        {tab === 'ocr'       && <OcrRequestsTab addError={addError} />}
       </main>
     </div>
   );
@@ -344,6 +347,226 @@ function PromptsTab({ addError }: { addError: (m: string) => void }) {
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+// ─── OCR Requests Tab ─────────────────────────────────────────────────────────
+function OcrRequestsTab({ addError }: { addError: (m: string) => void }) {
+  const [status, setStatus] = useState<{
+    pendingOperations: { name: string; state: string }[];
+    pendingCount: number;
+    processingCases: { id: string; patientName: string }[];
+    lroError: string | null;
+  } | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelResult, setCancelResult] = useState<{
+    cancelledLROs: number;
+    cancelledCases: number;
+    lroError: string | null;
+  } | null>(null);
+
+  const checkStatus = async () => {
+    setChecking(true);
+    setCancelResult(null);
+    try {
+      const res = await fetch('/api/admin/docai/operations');
+      if (!res.ok) throw new Error('Request failed');
+      setStatus(await res.json());
+    } catch (e: any) {
+      addError(`Failed to check OCR status: ${e.message}`);
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  const cancelAll = async () => {
+    if (!window.confirm('Cancel all pending Document AI requests? This will stop all active OCR jobs and revert any processing cases back to draft.')) return;
+    setCancelling(true);
+    try {
+      const res = await fetch('/api/admin/docai/cancel-all', { method: 'POST' });
+      if (!res.ok) throw new Error('Cancel request failed');
+      const result = await res.json();
+      setCancelResult(result);
+      await checkStatus(); // refresh status after cancel
+    } catch (e: any) {
+      addError(`Failed to cancel operations: ${e.message}`);
+    } finally {
+      setCancelling(false);
+    }
+  };
+
+  const noPending = status && status.pendingCount === 0 && status.processingCases.length === 0;
+  const hasPending = status && (status.pendingCount > 0 || status.processingCases.length > 0);
+
+  return (
+    <div className="space-y-6">
+      {/* ── Status section ── */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-widest">
+            Request Status
+          </h2>
+          <button
+            onClick={checkStatus}
+            disabled={checking}
+            className="flex items-center gap-1.5 text-xs text-indigo-600 dark:text-indigo-400 hover:underline disabled:opacity-50"
+          >
+            <RefreshCw className={cn('w-3.5 h-3.5', checking && 'animate-spin')} />
+            {status ? 'Refresh' : 'Check Status'}
+          </button>
+        </div>
+
+        {!status && !checking && (
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-8 flex flex-col items-center gap-3 text-center">
+            <ScanSearch className="w-8 h-8 text-slate-300 dark:text-slate-600" />
+            <p className="text-sm text-slate-400">Click <span className="font-medium text-slate-600 dark:text-slate-300">Check Status</span> to query Document AI for active OCR requests.</p>
+          </div>
+        )}
+
+        {checking && (
+          <div className="flex justify-center py-10">
+            <Loader2 className="w-6 h-6 text-indigo-500 animate-spin" />
+          </div>
+        )}
+
+        {!checking && status && (
+          <div className="space-y-3">
+            {/* Summary card */}
+            <div className={cn(
+              'bg-white dark:bg-slate-900 border rounded-xl p-5',
+              noPending
+                ? 'border-emerald-200 dark:border-emerald-800'
+                : 'border-amber-200 dark:border-amber-800',
+            )}>
+              <div className="flex items-center gap-3">
+                {noPending
+                  ? <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0" />
+                  : <AlertCircle className="w-5 h-5 text-amber-500 shrink-0" />}
+                <div>
+                  {noPending ? (
+                    <p className="text-sm font-semibold text-emerald-800 dark:text-emerald-300">
+                      No pending requests — Document AI quota is clear
+                    </p>
+                  ) : (
+                    <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">
+                      {status.pendingCount > 0
+                        ? `${status.pendingCount} pending LRO${status.pendingCount !== 1 ? 's' : ''} detected`
+                        : `${status.processingCases.length} case${status.processingCases.length !== 1 ? 's' : ''} currently processing`}
+                    </p>
+                  )}
+                  {status.lroError && (
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      (DocAI operations API unavailable — showing Firestore case status only)
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Pending LROs list */}
+            {status.pendingOperations.length > 0 && (
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden">
+                <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50">
+                  <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                    Active Document AI Operations
+                  </p>
+                </div>
+                <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {status.pendingOperations.map((op, i) => (
+                    <li key={i} className="px-4 py-3 flex items-center justify-between gap-4">
+                      <span className="text-xs font-mono text-slate-500 dark:text-slate-400 truncate">
+                        {op.name.split('/operations/')[1] || op.name}
+                      </span>
+                      <span className={cn(
+                        'text-xs font-medium px-2 py-0.5 rounded-full shrink-0',
+                        op.state === 'RUNNING'
+                          ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
+                          : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400',
+                      )}>
+                        {op.state}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Processing cases */}
+            {status.processingCases.length > 0 && (
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden">
+                <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50">
+                  <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                    Cases Currently Processing
+                  </p>
+                </div>
+                <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {status.processingCases.map(c => (
+                    <li key={c.id} className="px-4 py-3 flex items-center gap-3">
+                      <div className="w-2 h-2 rounded-full bg-amber-400 animate-pulse shrink-0" />
+                      <span className="text-sm text-slate-800 dark:text-slate-200">{c.patientName}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Divider */}
+      <div className="border-t border-slate-200 dark:border-slate-700" />
+
+      {/* ── Cancel section ── */}
+      <div className="space-y-3">
+        <div>
+          <h2 className="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-1">
+            Cancel All Document AI Requests
+          </h2>
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            Sends a cancel command to every active DocAI batch processing job in this project and reverts any processing cases back to draft status.
+            Use this to free up quota when requests are stuck or blocking new uploads.
+          </p>
+        </div>
+
+        {/* Cancel result banner */}
+        {cancelResult && (
+          <div className={cn(
+            'rounded-xl px-4 py-3 flex items-start gap-3',
+            cancelResult.cancelledLROs > 0 || cancelResult.cancelledCases > 0
+              ? 'bg-emerald-50 border border-emerald-200 dark:bg-emerald-950/20 dark:border-emerald-800'
+              : 'bg-slate-50 border border-slate-200 dark:bg-slate-800/50 dark:border-slate-700',
+          )}>
+            <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
+            <div className="text-sm text-emerald-800 dark:text-emerald-300">
+              {cancelResult.cancelledLROs > 0 && (
+                <p>{cancelResult.cancelledLROs} DocAI operation{cancelResult.cancelledLROs !== 1 ? 's' : ''} cancelled.</p>
+              )}
+              {cancelResult.cancelledCases > 0 && (
+                <p>{cancelResult.cancelledCases} case{cancelResult.cancelledCases !== 1 ? 's' : ''} reverted to draft.</p>
+              )}
+              {cancelResult.cancelledLROs === 0 && cancelResult.cancelledCases === 0 && (
+                <p className="text-slate-600 dark:text-slate-300">No active operations found.</p>
+              )}
+              {cancelResult.lroError && (
+                <p className="text-xs text-slate-400 mt-0.5">(DocAI operations API unavailable — in-memory pipelines cancelled via internal tracker)</p>
+              )}
+            </div>
+          </div>
+        )}
+
+        <button
+          onClick={cancelAll}
+          disabled={cancelling}
+          className="flex items-center gap-2 px-5 py-2.5 text-sm font-semibold text-white bg-rose-600 hover:bg-rose-700 rounded-xl transition-colors shadow-sm disabled:opacity-50"
+        >
+          {cancelling
+            ? <Loader2 className="w-4 h-4 animate-spin" />
+            : <StopCircle className="w-4 h-4" />}
+          {cancelling ? 'Cancelling…' : 'Cancel All Document AI Requests'}
+        </button>
+      </div>
     </div>
   );
 }
