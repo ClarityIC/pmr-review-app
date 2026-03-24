@@ -26,7 +26,7 @@ export default function NavBar({ user, onLogout, darkMode, onToggleDark }: Props
         onClick={() => navigate('/cases')}
         className="flex items-center gap-3 hover:opacity-80 transition-opacity"
       >
-        <img src="/clarity-logo.png" alt="Clarity IC" className="h-7 object-contain" />
+        <img src={darkMode ? '/clarity-logo-dark.webp' : '/clarity-logo.png'} alt="Clarity IC" className="h-7 object-contain" />
         <div>
           <div className="text-base font-semibold tracking-tight text-slate-900 dark:text-slate-100">Prior Records Review</div>
           <div className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">

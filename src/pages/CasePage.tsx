@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
-  UploadCloud, Loader2, Download, ChevronLeft, ChevronRight, X,
-  PanelRightClose, PanelRightOpen, FileText, RefreshCw, AlertCircle, CheckCircle2, Play, StopCircle, RotateCcw,
+  UploadCloud, Loader2, Download, ChevronLeft, ChevronRight, ChevronDown, X,
+  PanelRightClose, PanelRightOpen, FileText, ArrowUp, AlertCircle, CheckCircle2, Play, StopCircle, RotateCcw,
 } from 'lucide-react';
 import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
@@ -55,6 +55,14 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
   const [t1Filters, setT1Filters] = useState<FilterConfig>({});
   const [t2Sort, setT2Sort] = useState<SortConfig>({ key: '', direction: null });
   const [t2Filters, setT2Filters] = useState<FilterConfig>({});
+
+  // Table collapse
+  const [t1Collapsed, setT1Collapsed] = useState(false);
+  const [t2Collapsed, setT2Collapsed] = useState(false);
+
+  // Column resize
+  const [t1ColWidths, setT1ColWidths] = useState<Record<string, number>>({});
+  const [t2ColWidths, setT2ColWidths] = useState<Record<string, number>>({});
 
   // Success toast
   const [successToast, setSuccessToast] = useState<string | null>(null);
@@ -258,6 +266,56 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
   const getUnique = (rows: any[], key: string) =>
     Array.from(new Set(rows.map((r: any) => String(r[key] ?? '')))).sort();
 
+  // ── Column resize handler ──
+  const startResize = useCallback((
+    key: string,
+    startX: number,
+    currentWidth: number,
+    setWidths: React.Dispatch<React.SetStateAction<Record<string, number>>>,
+  ) => {
+    const onMove = (e: MouseEvent) => {
+      const newW = Math.min(500, Math.max(80, currentWidth + e.clientX - startX));
+      setWidths(prev => ({ ...prev, [key]: newW }));
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, []);
+
+  // ── Scroll shadow state ──
+  const [t1Shadow, setT1Shadow] = useState({ left: false, right: false });
+  const [t2Shadow, setT2Shadow] = useState({ left: false, right: false });
+  const handleScrollShadow = useCallback((
+    el: HTMLDivElement | null,
+    setShadow: React.Dispatch<React.SetStateAction<{ left: boolean; right: boolean }>>,
+  ) => {
+    if (!el) return;
+    const update = () => {
+      setShadow({
+        left: el.scrollLeft > 0,
+        right: el.scrollLeft + el.clientWidth < el.scrollWidth - 1,
+      });
+    };
+    update();
+    el.addEventListener('scroll', update);
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => { el.removeEventListener('scroll', update); ro.disconnect(); };
+  }, []);
+
+  const t1ScrollRef = useRef<HTMLDivElement>(null);
+  const t2ScrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => handleScrollShadow(t1ScrollRef.current, setT1Shadow), [t1ScrollRef.current, handleScrollShadow]);
+  useEffect(() => handleScrollShadow(t2ScrollRef.current, setT2Shadow), [t2ScrollRef.current, handleScrollShadow]);
+
   // ── Render ─────────────────────────────────────────────────────────────────
   if (loading) {
     return (
@@ -295,8 +353,8 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
         )}
       </AnimatePresence>
 
-      {/* Page header */}
-      <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-6 py-3 flex items-center gap-4">
+      {/* Page header — sticky below navbar */}
+      <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-6 py-3 flex items-center gap-4 sticky top-[57px] z-20">
         <button onClick={() => navigate('/cases')} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors">
           <ChevronLeft className="w-5 h-5" />
         </button>
@@ -306,6 +364,12 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
           </h1>
           <p className="text-xs text-slate-500">Date of Injury: {caseData.dateOfInjury} · <StatusBadge status={caseData.status} /></p>
         </div>
+        {hasResults && (
+          <div className="flex items-center gap-2">
+            <a href="#table1" className="text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 px-2 py-1 rounded-md hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors">T1: MedChron</a>
+            <a href="#table2" className="text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 px-2 py-1 rounded-md hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors">T2: Conditions</a>
+          </div>
+        )}
         {caseData.files?.length > 0 && (
           <span className="text-xs text-slate-400">{caseData.files.length} file{caseData.files.length !== 1 ? 's' : ''}</span>
         )}
@@ -506,103 +570,174 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
             <div className="px-6 pt-4 flex justify-end">
               <button
                 onClick={() => fileInputRef.current?.click()}
-                className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors border border-slate-200 dark:border-slate-700"
+                className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl transition-colors shadow-sm"
               >
-                <RefreshCw className="w-3.5 h-3.5" /> Upload more files
+                <ArrowUp className="w-4 h-4" /> Upload more files
               </button>
+            </div>
+          )}
+
+          {/* ── Source files + compilation timestamp ── */}
+          {hasResults && caseData.files?.length > 0 && (
+            <div className="px-6 pt-6 pb-2">
+              <div className="text-xs text-slate-500 dark:text-slate-400 space-y-0.5">
+                <p className="font-medium">Compiled from:</p>
+                {caseData.files.map((f: any, i: number) => (
+                  <p key={i} className="pl-3">{f.name}</p>
+                ))}
+                {caseData.updatedAt && (
+                  <p className="pt-1">Generated: {new Date(caseData.updatedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })}</p>
+                )}
+              </div>
             </div>
           )}
 
           {/* ── Table 1: Medical Chronology ── */}
           {table1Rows.length > 0 && (
-            <section className="px-6 pt-6 pb-4">
-              <div className="flex items-center justify-between mb-3">
+            <section id="table1" className="px-6 pt-4 pb-4">
+              <button
+                onClick={() => setT1Collapsed(v => !v)}
+                className="flex items-center gap-2 mb-3 group cursor-pointer"
+              >
+                <ChevronRight className={cn('w-4 h-4 text-slate-400 transition-transform', !t1Collapsed && 'rotate-90')} />
                 <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
                   Table 1: Medical Chronology <span className="text-slate-400 font-normal">({caseData.table1.length} records)</span>
                 </h2>
-                <button onClick={() => downloadXlsx('table1')} className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-400 transition-colors">
-                  <Download className="w-3.5 h-3.5" /> Download .xlsx
+              </button>
+              <div className="flex items-center justify-end mb-2">
+                <button onClick={() => downloadXlsx('table1')} className="flex items-center gap-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 px-3 py-1.5 rounded-lg transition-colors shadow-sm">
+                  <Download className="w-3.5 h-3.5" /> Download for Excel
                 </button>
               </div>
-              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl overflow-auto shadow-sm">
-                <table className="w-full text-sm text-left min-w-[900px]">
-                  <thead className="bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 text-xs font-medium uppercase tracking-wider border-b border-slate-200 dark:border-slate-700">
-                    <tr>
-                      {t1Keys.map(key => (
-                        <SortableFilterableHeader
-                          key={key} label={key} columnKey={key}
-                          sortConfig={t1Sort} onSort={k => handleSort(k, setT1Sort)}
-                          filterValue={t1Filters[key] || ''}
-                          onFilter={(k, v) => setT1Filters(prev => ({ ...prev, [k]: v }))}
-                          uniqueValues={getUnique(caseData.table1, key)}
-                        />
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                    {table1Rows.map((row: any, idx: number) => (
-                      <tr key={idx} className={cn('hover:bg-indigo-50/30 dark:hover:bg-indigo-900/10 transition-colors', idx % 2 === 1 && 'bg-slate-50/50 dark:bg-slate-900/30')}>
+              {!t1Collapsed && (
+                <div
+                  ref={t1ScrollRef}
+                  className="relative bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl overflow-auto shadow-sm max-h-[70vh]"
+                  style={{
+                    boxShadow: [
+                      t1Shadow.left ? 'inset 8px 0 6px -6px rgba(0,0,0,0.1)' : '',
+                      t1Shadow.right ? 'inset -8px 0 6px -6px rgba(0,0,0,0.1)' : '',
+                    ].filter(Boolean).join(', ') || undefined,
+                  }}
+                >
+                  <table className="w-full text-sm text-left min-w-[900px]">
+                    <thead className="bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 text-xs font-medium uppercase tracking-wider border-b border-slate-200 dark:border-slate-700 sticky top-0 z-10">
+                      <tr>
                         {t1Keys.map(key => (
-                          <td key={key} className="px-4 py-3 text-slate-700 dark:text-slate-300 max-w-[240px]">
-                            {key.toLowerCase().includes('citation') ? (
-                              <button
-                                onClick={() => handleCitationClick(String(row[key] || ''))}
-                                className="text-indigo-600 dark:text-indigo-400 hover:underline text-left text-xs"
-                              >
-                                {row[key] || '—'}
-                              </button>
-                            ) : (
-                              <div className="text-xs whitespace-pre-wrap break-words">{row[key] || '—'}</div>
-                            )}
-                          </td>
+                          <SortableFilterableHeader
+                            key={key} label={key} columnKey={key}
+                            sortConfig={t1Sort} onSort={k => handleSort(k, setT1Sort)}
+                            filterValue={t1Filters[key] || ''}
+                            onFilter={(k, v) => setT1Filters(prev => ({ ...prev, [k]: v }))}
+                            uniqueValues={getUnique(caseData.table1, key)}
+                            style={{ width: t1ColWidths[key] || undefined, minWidth: 80, maxWidth: 500 }}
+                            resizeHandle={
+                              <div
+                                onMouseDown={e => {
+                                  e.stopPropagation();
+                                  const th = (e.target as HTMLElement).closest('th');
+                                  startResize(key, e.clientX, th?.offsetWidth || 120, setT1ColWidths);
+                                }}
+                                className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-indigo-400/50"
+                              />
+                            }
+                          />
                         ))}
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                      {table1Rows.map((row: any, idx: number) => (
+                        <tr key={idx} className={cn('hover:bg-indigo-50/30 dark:hover:bg-indigo-900/10 transition-colors', idx % 2 === 1 && 'bg-slate-50/50 dark:bg-slate-900/30')}>
+                          {t1Keys.map(key => (
+                            <td key={key} className="px-4 py-3 text-slate-700 dark:text-slate-300 border-r border-slate-100 dark:border-slate-800 last:border-r-0" style={{ width: t1ColWidths[key] || undefined, minWidth: 80, maxWidth: 500 }}>
+                              {key.toLowerCase().includes('citation') ? (
+                                <button
+                                  onClick={() => handleCitationClick(String(row[key] || ''))}
+                                  className="text-indigo-600 dark:text-indigo-400 hover:underline text-left text-xs"
+                                >
+                                  {row[key] || '—'}
+                                </button>
+                              ) : (
+                                <div className="text-xs whitespace-pre-wrap break-words">{row[key] || '—'}</div>
+                              )}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </section>
           )}
 
           {/* ── Table 2: Patient Conditions ── */}
           {table2Rows.length > 0 && (
-            <section className="px-6 pt-4 pb-8">
-              <div className="flex items-center justify-between mb-3">
+            <section id="table2" className="px-6 pt-4 pb-8">
+              <button
+                onClick={() => setT2Collapsed(v => !v)}
+                className="flex items-center gap-2 mb-3 group cursor-pointer"
+              >
+                <ChevronRight className={cn('w-4 h-4 text-slate-400 transition-transform', !t2Collapsed && 'rotate-90')} />
                 <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
                   Table 2: Patient Conditions <span className="text-slate-400 font-normal">({caseData.table2.length} conditions)</span>
                 </h2>
-                <button onClick={() => downloadXlsx('table2')} className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-400 transition-colors">
-                  <Download className="w-3.5 h-3.5" /> Download .xlsx
+              </button>
+              <div className="flex items-center justify-end mb-2">
+                <button onClick={() => downloadXlsx('table2')} className="flex items-center gap-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 px-3 py-1.5 rounded-lg transition-colors shadow-sm">
+                  <Download className="w-3.5 h-3.5" /> Download for Excel
                 </button>
               </div>
-              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl overflow-auto shadow-sm">
-                <table className="w-full text-sm text-left min-w-[900px]">
-                  <thead className="bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 text-xs font-medium uppercase tracking-wider border-b border-slate-200 dark:border-slate-700">
-                    <tr>
-                      {t2Keys.map(key => (
-                        <SortableFilterableHeader
-                          key={key} label={key} columnKey={key}
-                          sortConfig={t2Sort} onSort={k => handleSort(k, setT2Sort)}
-                          filterValue={t2Filters[key] || ''}
-                          onFilter={(k, v) => setT2Filters(prev => ({ ...prev, [k]: v }))}
-                          uniqueValues={getUnique(caseData.table2, key)}
-                        />
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                    {table2Rows.map((row: any, idx: number) => (
-                      <tr key={idx} className={cn('hover:bg-indigo-50/30 dark:hover:bg-indigo-900/10 transition-colors', idx % 2 === 1 && 'bg-slate-50/50 dark:bg-slate-900/30')}>
+              {!t2Collapsed && (
+                <div
+                  ref={t2ScrollRef}
+                  className="relative bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl overflow-auto shadow-sm max-h-[70vh]"
+                  style={{
+                    boxShadow: [
+                      t2Shadow.left ? 'inset 8px 0 6px -6px rgba(0,0,0,0.1)' : '',
+                      t2Shadow.right ? 'inset -8px 0 6px -6px rgba(0,0,0,0.1)' : '',
+                    ].filter(Boolean).join(', ') || undefined,
+                  }}
+                >
+                  <table className="w-full text-sm text-left min-w-[900px]">
+                    <thead className="bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 text-xs font-medium uppercase tracking-wider border-b border-slate-200 dark:border-slate-700 sticky top-0 z-10">
+                      <tr>
                         {t2Keys.map(key => (
-                          <td key={key} className="px-4 py-3 text-slate-700 dark:text-slate-300 max-w-[240px]">
-                            <div className="text-xs whitespace-pre-wrap break-words">{row[key] || '—'}</div>
-                          </td>
+                          <SortableFilterableHeader
+                            key={key} label={key} columnKey={key}
+                            sortConfig={t2Sort} onSort={k => handleSort(k, setT2Sort)}
+                            filterValue={t2Filters[key] || ''}
+                            onFilter={(k, v) => setT2Filters(prev => ({ ...prev, [k]: v }))}
+                            uniqueValues={getUnique(caseData.table2, key)}
+                            style={{ width: t2ColWidths[key] || undefined, minWidth: 80, maxWidth: 500 }}
+                            resizeHandle={
+                              <div
+                                onMouseDown={e => {
+                                  e.stopPropagation();
+                                  const th = (e.target as HTMLElement).closest('th');
+                                  startResize(key, e.clientX, th?.offsetWidth || 120, setT2ColWidths);
+                                }}
+                                className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-indigo-400/50"
+                              />
+                            }
+                          />
                         ))}
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                      {table2Rows.map((row: any, idx: number) => (
+                        <tr key={idx} className={cn('hover:bg-indigo-50/30 dark:hover:bg-indigo-900/10 transition-colors', idx % 2 === 1 && 'bg-slate-50/50 dark:bg-slate-900/30')}>
+                          {t2Keys.map(key => (
+                            <td key={key} className="px-4 py-3 text-slate-700 dark:text-slate-300 border-r border-slate-100 dark:border-slate-800 last:border-r-0" style={{ width: t2ColWidths[key] || undefined, minWidth: 80, maxWidth: 500 }}>
+                              <div className="text-xs whitespace-pre-wrap break-words">{row[key] || '—'}</div>
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </section>
           )}
 

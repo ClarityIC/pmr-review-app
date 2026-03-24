@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React from 'react';
 import { ChevronDown, ChevronUp, Activity } from 'lucide-react';
 import { cn } from '../lib/utils.js';
 
@@ -29,15 +29,9 @@ const LEVEL_TEXT: Record<LogEntry['level'], string> = {
 };
 
 export default function LogDrawer({ logs, isOpen, onToggle }: Props) {
-  const endRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (isOpen) endRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [logs, isOpen]);
-
   const formatTime = (ts: string) => {
     try {
-      return new Date(ts).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
+      return new Date(ts).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
     } catch { return ts; }
   };
 
@@ -62,23 +56,22 @@ export default function LogDrawer({ logs, isOpen, onToggle }: Props) {
       {isOpen && (
         <div className="h-56 overflow-y-auto bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800">
           {logs.length === 0 ? (
-            <p className="text-sm text-slate-400 px-5 py-4">Waiting for processing to start…</p>
+            <p className="font-mono text-xs text-slate-400 px-5 py-4">Waiting for processing to start…</p>
           ) : (
-            <div className="divide-y divide-slate-50 dark:divide-slate-800/50">
+            <div className="font-mono">
               {logs.map((entry, i) => (
-                <div key={i} className="flex items-start gap-3 px-5 py-2.5">
-                  <div className={cn('mt-1.5 w-2 h-2 rounded-full shrink-0', LEVEL_DOT[entry.level])} />
-                  <span className={cn('flex-1 text-sm leading-relaxed', LEVEL_TEXT[entry.level])}>
-                    {entry.message}
-                  </span>
-                  <span className="text-xs text-slate-400 shrink-0 tabular-nums mt-0.5">
+                <div key={i} className="flex items-start gap-2 px-5 py-1">
+                  <span className="text-[10px] text-slate-400 shrink-0 tabular-nums mt-px">
                     {formatTime(entry.timestamp)}
+                  </span>
+                  <div className={cn('mt-1.5 w-1.5 h-1.5 rounded-full shrink-0', LEVEL_DOT[entry.level])} />
+                  <span className={cn('flex-1 text-xs', LEVEL_TEXT[entry.level])}>
+                    {entry.message}
                   </span>
                 </div>
               ))}
             </div>
           )}
-          <div ref={endRef} />
         </div>
       )}
     </div>

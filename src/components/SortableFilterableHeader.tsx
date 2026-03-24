@@ -15,11 +15,13 @@ interface Props {
   onFilter: (key: string, value: string) => void;
   uniqueValues?: string[];
   className?: string;
+  style?: React.CSSProperties;
+  resizeHandle?: React.ReactNode;
 }
 
 export default function SortableFilterableHeader({
   label, columnKey, sortConfig, onSort,
-  filterValue, onFilter, uniqueValues = [], className,
+  filterValue, onFilter, uniqueValues = [], className, style, resizeHandle,
 }: Props) {
   const [showFilter, setShowFilter] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -36,7 +38,7 @@ export default function SortableFilterableHeader({
   const isFiltered = filterValue !== '';
 
   return (
-    <th className={cn('px-4 py-3 whitespace-nowrap relative', className)}>
+    <th className={cn('px-4 py-3 whitespace-nowrap relative border-r border-slate-100 dark:border-slate-800 last:border-r-0', className)} style={style}>
       <div className="flex items-center gap-1" ref={ref}>
         <button
           onClick={() => onSort(columnKey)}
@@ -86,6 +88,7 @@ export default function SortableFilterableHeader({
           </div>
         )}
       </div>
+      {resizeHandle}
     </th>
   );
 }
