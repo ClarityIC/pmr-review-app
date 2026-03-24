@@ -26,6 +26,7 @@ import {
 import { signedReadUrl, signedWriteUrl, getBucketUsageBytes, listObjects, deletePrefix, deleteObject, downloadFile, BUCKET_AUTH, BUCKET_STAGING, BUCKET_OUTPUT } from './server/gcs.js';
 import { deleteCaseRows, deleteOrphanRows } from './server/bigquery.js';
 import { runPipeline, cancelPipeline, getActiveLRONames, FileInput } from './server/pipeline/orchestrator.js';
+import { regenerateTable } from './server/pipeline/regenerate.js';
 import { runPreflight } from './server/preflight.js';
 import { DEFAULT_TABLE1_PROMPT, DEFAULT_TABLE2_PROMPT } from './server/pipeline/prompts.js';
 
@@ -371,7 +372,7 @@ app.get('/api/cases/:id/logs', (req: Request, res: Response) => {
       sentCount = logs.length;
 
       if (!closed) {
-        if (caseDoc.status === 'processing') {
+        if (caseDoc.status === 'processing' || caseDoc.regeneratingTable) {
           setTimeout(() => poll(0), 3000);
         } else if (drain > 0) {
           setTimeout(() => poll(drain - 1), 1500);
@@ -628,6 +629,137 @@ app.post('/api/admin/prompts/:table', async (req: Request, res: Response) => {
 
     await docRef.set({ current: prompt.trim(), history, updatedAt: now });
     res.json({ ok: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Table regeneration ──────────────────────────────────────────────────────
+
+// Get the prompt to pre-fill the regeneration editor (per-case, per-table)
+app.get('/api/cases/:id/prompts/:table', async (req: Request, res: Response) => {
+  try {
+    const caseRecord = await getCase(req.params.id);
+    if (!caseRecord) return res.status(404).json({ error: 'Case not found' });
+
+    const tableKey = req.params.table === 'table2' ? 'table2' : 'table1';
+    const versionsKey = tableKey === 'table1' ? 'table1Versions' : 'table2Versions';
+    const versions = caseRecord[versionsKey] || [];
+
+    // Resolution: most recent version's prompt → case override → global → default
+    let prompt: string;
+    let source: string;
+    if (versions.length > 0 && versions[0].prompt && versions[0].prompt !== 'default' && versions[0].prompt !== 'initial pipeline') {
+      prompt = versions[0].prompt;
+      source = 'version';
+    } else if (caseRecord[`${tableKey}Prompt` as keyof typeof caseRecord]) {
+      prompt = caseRecord[`${tableKey}Prompt` as keyof typeof caseRecord] as string;
+      source = 'case-override';
+    } else {
+      // Try global Firestore prompt, then hardcoded default
+      const { getFirestore: _getFs } = await import('./server/config.js');
+      const doc = await _getFs().collection('prompts').doc(tableKey).get();
+      if (doc.exists && doc.data()?.current) {
+        prompt = doc.data()!.current;
+        source = 'global';
+      } else {
+        prompt = tableKey === 'table1' ? DEFAULT_TABLE1_PROMPT : DEFAULT_TABLE2_PROMPT;
+        source = 'default';
+      }
+    }
+
+    // Build per-case prompt history from versions
+    const history = versions
+      .filter((v: any) => v.prompt && v.prompt !== 'default' && v.prompt !== 'initial pipeline')
+      .map((v: any) => ({
+        prompt: v.prompt,
+        usedAt: v.generatedAt,
+        version: v.version,
+      }));
+
+    res.json({ prompt, source, history });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Trigger table regeneration
+app.post('/api/cases/:id/regenerate/:table', async (req: Request, res: Response) => {
+  try {
+    const caseRecord = await getCase(req.params.id);
+    if (!caseRecord) return res.status(404).json({ error: 'Case not found' });
+    if (caseRecord.status !== 'complete') {
+      return res.status(400).json({ error: 'Case must be in "complete" status to regenerate a table.' });
+    }
+    if (caseRecord.regeneratingTable) {
+      return res.status(409).json({ error: `Already regenerating ${caseRecord.regeneratingTable}. Please wait.` });
+    }
+
+    const tableKey = req.params.table === 'table2' ? 'table2' : 'table1';
+    const { prompt } = req.body;
+    if (!prompt?.trim()) return res.status(400).json({ error: 'Prompt is required' });
+
+    const user = (req as any).user;
+
+    // Respond immediately — regeneration runs async
+    res.status(202).json({ message: 'Regeneration started' });
+
+    regenerateTable(req.params.id, tableKey, prompt.trim(), user.email)
+      .catch(e => console.error('[regenerate]', e));
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Get a specific table version's rows
+app.get('/api/cases/:id/table-version/:table/:version', async (req: Request, res: Response) => {
+  try {
+    const caseRecord = await getCase(req.params.id);
+    if (!caseRecord) return res.status(404).json({ error: 'Case not found' });
+
+    const tableKey = req.params.table === 'table2' ? 'table2' : 'table1';
+    const versions = caseRecord[tableKey === 'table1' ? 'table1Versions' : 'table2Versions'] || [];
+    const versionNum = parseInt(req.params.version, 10);
+    const version = versions.find((v: any) => v.version === versionNum);
+    if (!version) return res.status(404).json({ error: 'Version not found' });
+
+    res.json({
+      version: version.version,
+      rows: version.rows,
+      generatedAt: version.generatedAt,
+      generatedBy: version.generatedBy,
+      prompt: version.prompt,
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Activate a past table version (make it the current displayed table)
+app.post('/api/cases/:id/table-version/:table/:version/activate', async (req: Request, res: Response) => {
+  try {
+    const caseRecord = await getCase(req.params.id);
+    if (!caseRecord) return res.status(404).json({ error: 'Case not found' });
+
+    const tableKey = req.params.table === 'table2' ? 'table2' : 'table1';
+    const versionsKey = tableKey === 'table1' ? 'table1Versions' : 'table2Versions';
+    const versions = caseRecord[versionsKey] || [];
+    const versionNum = parseInt(req.params.version, 10);
+    const versionIdx = versions.findIndex((v: any) => v.version === versionNum);
+    if (versionIdx === -1) return res.status(404).json({ error: 'Version not found' });
+
+    const version = versions[versionIdx];
+    const patch: Record<string, any> = {
+      [tableKey]: version.rows,
+      [`${tableKey}ActiveVersion`]: versionIdx,
+    };
+    // For Table 1, also update the markdown (Table 2 regen depends on it)
+    if (tableKey === 'table1' && version.markdownTable) {
+      patch.table1Markdown = version.markdownTable;
+    }
+
+    await updateCase(req.params.id, patch);
+    res.json({ ok: true, activatedVersion: version.version });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }

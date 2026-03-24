@@ -322,15 +322,15 @@ async function pollLRO(docai: any, operationName: string, label: string, log: Lo
     const metadata = op.metadata as any;
     const state = metadata?.state || metadata?.commonMetadata?.state || 'RUNNING';
 
-    log('info', `[Step 2] ${label} LRO poll #${attempts}: state=${state}`);
-
     if (op.done) {
       if (op.error) {
         throw new Error(`[Step 2] ${label} LRO failed: ${JSON.stringify(op.error)}`);
       }
-      log('success', `[Step 2] ${label} LRO SUCCEEDED after ${attempts} polls (~${attempts * 10}s)`);
+      log('success', `[Step 2] ${label} processor completed successfully (${attempts} polls, ~${attempts * 10}s)`);
       return;
     }
+
+    log('info', `[Step 2] ${label} LRO poll #${attempts}: state=${state}`);
 
     if (state === 'FAILED') {
       throw new Error(`[Step 2] ${label} LRO state=FAILED`);

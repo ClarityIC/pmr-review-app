@@ -17,7 +17,7 @@ import { step2 } from './step2-docai.js';
 import { step3 } from './step3-reassemble.js';
 import { step4 } from './step4-table1.js';
 import { step5 } from './step5-table2.js';
-import { updateCase, addFileToCase, getCase } from '../cases.js';
+import { updateCase, addFileToCase, getCase, TableVersion } from '../cases.js';
 import { getFirestore, getDocAI } from '../config.js';
 import { BUCKET_AUTH } from '../gcs.js';
 import { ensureTable0Exists, deleteCaseRows } from '../bigquery.js';
@@ -191,29 +191,47 @@ export async function runPipeline(opts: RunOptions): Promise<void> {
     // ── Step 4: Table 1 generation (whole case) ───────────────────────────────
     if (isCancelled()) throw new Error('Processing was cancelled.');
     const caseData = await getCase(caseId);
+    const t1Prompt = caseData?.table1Prompt;
     const { rows: table1Rows, markdownTable: table1Md } = await step4(
       caseId,
-      caseData?.table1Prompt,
+      t1Prompt,
       log,
     );
 
-    await updateCase(caseId, { table1: table1Rows });
+    await updateCase(caseId, { table1: table1Rows, table1Markdown: table1Md });
 
     // ── Step 5: Table 2 generation (whole case) ───────────────────────────────
     if (isCancelled()) throw new Error('Processing was cancelled.');
-    const { rows: table2Rows } = await step5(
+    const t2Prompt = caseData?.table2Prompt;
+    const { rows: table2Rows, markdownTable: table2Md } = await step5(
       caseId,
       table1Md,
-      caseData?.table2Prompt,
+      t2Prompt,
       log,
     );
 
     // ── Finalise ──────────────────────────────────────────────────────────────
+    const now = new Date().toISOString();
+    const t1Version: TableVersion = {
+      version: 1, rows: table1Rows, markdownTable: table1Md,
+      prompt: t1Prompt || 'default', generatedAt: now, generatedBy: opts.createdBy,
+    };
+    const t2Version: TableVersion = {
+      version: 1, rows: table2Rows, markdownTable: table2Md,
+      prompt: t2Prompt || 'default', generatedAt: now, generatedBy: opts.createdBy,
+    };
+
     await updateCase(caseId, {
       status: 'complete',
       table1: table1Rows,
       table2: table2Rows,
-      dateProcessed: new Date().toISOString(),
+      table1Markdown: table1Md,
+      table2Markdown: table2Md,
+      table1Versions: [t1Version],
+      table2Versions: [t2Version],
+      table1ActiveVersion: 0,
+      table2ActiveVersion: 0,
+      dateProcessed: now,
     });
 
     log('success', `Pipeline complete! Table 1: ${table1Rows.length} records, Table 2: ${table2Rows.length} conditions`);

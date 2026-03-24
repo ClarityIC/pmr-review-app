@@ -12,6 +12,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import NavBar from '../components/NavBar.js';
 import LogDrawer, { LogEntry } from '../components/LogDrawer.js';
 import StatusBadge from '../components/StatusBadge.js';
+import RegenerateEditor from '../components/RegenerateEditor.js';
+import VersionDropdown from '../components/VersionDropdown.js';
 import SortableFilterableHeader, {
   applySortFilter, handleSort,
   SortConfig, FilterConfig,
@@ -66,6 +68,9 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
 
   // Success toast
   const [successToast, setSuccessToast] = useState<string | null>(null);
+
+  // Regeneration overlay
+  const [regenerateTarget, setRegenerateTarget] = useState<'table1' | 'table2' | null>(null);
 
   // PDF Viewer
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
@@ -625,7 +630,22 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                   Table 1: Medical Chronology <span className="text-slate-400 font-normal">({caseData.table1.length} records)</span>
                 </h2>
               </button>
-              <div className="flex items-center justify-end mb-2">
+              <div className="flex items-center gap-3 mb-2">
+                {caseData.table1Versions?.length > 1 && (
+                  <VersionDropdown
+                    caseId={id!}
+                    table="table1"
+                    versions={caseData.table1Versions}
+                    activeVersionIndex={caseData.table1ActiveVersion ?? 0}
+                    onVersionChange={() => loadCase()}
+                  />
+                )}
+                <div className="flex-1" />
+                {caseData.status === 'complete' && (
+                  <button onClick={() => setRegenerateTarget('table1')} className="flex items-center gap-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 px-3 py-1.5 rounded-lg transition-colors shadow-sm">
+                    <RotateCcw className="w-3.5 h-3.5" /> Regenerate Table...
+                  </button>
+                )}
                 <button onClick={() => downloadXlsx('table1')} className="flex items-center gap-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 px-3 py-1.5 rounded-lg transition-colors shadow-sm">
                   <Download className="w-3.5 h-3.5" /> Download for Excel
                 </button>
@@ -704,7 +724,22 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                   Table 2: Patient Conditions <span className="text-slate-400 font-normal">({caseData.table2.length} conditions)</span>
                 </h2>
               </button>
-              <div className="flex items-center justify-end mb-2">
+              <div className="flex items-center gap-3 mb-2">
+                {caseData.table2Versions?.length > 1 && (
+                  <VersionDropdown
+                    caseId={id!}
+                    table="table2"
+                    versions={caseData.table2Versions}
+                    activeVersionIndex={caseData.table2ActiveVersion ?? 0}
+                    onVersionChange={() => loadCase()}
+                  />
+                )}
+                <div className="flex-1" />
+                {caseData.status === 'complete' && (
+                  <button onClick={() => setRegenerateTarget('table2')} className="flex items-center gap-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 px-3 py-1.5 rounded-lg transition-colors shadow-sm">
+                    <RotateCcw className="w-3.5 h-3.5" /> Regenerate Table...
+                  </button>
+                )}
                 <button onClick={() => downloadXlsx('table2')} className="flex items-center gap-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 px-3 py-1.5 rounded-lg transition-colors shadow-sm">
                   <Download className="w-3.5 h-3.5" /> Download for Excel
                 </button>
@@ -832,6 +867,19 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
           </button>
         )}
       </div>
+
+      {/* Regeneration overlay */}
+      <AnimatePresence>
+        {regenerateTarget && (
+          <RegenerateEditor
+            caseId={id!}
+            table={regenerateTarget}
+            onClose={() => setRegenerateTarget(null)}
+            onSuccess={() => { setRegenerateTarget(null); loadCase(); }}
+            addError={addError}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

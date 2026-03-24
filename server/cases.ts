@@ -17,6 +17,15 @@ export interface CaseFile {
   uploadedAt: string;
 }
 
+export interface TableVersion {
+  version: number;          // 1-based, incrementing
+  rows: any[];              // Parsed table rows
+  markdownTable: string;    // Raw Gemini markdown output
+  prompt: string;           // Exact prompt used (for pre-fill on regen)
+  generatedAt: string;      // ISO timestamp
+  generatedBy: string;      // User email
+}
+
 export interface CaseRecord {
   id: string;
   patientName: string;
@@ -33,6 +42,17 @@ export interface CaseRecord {
   // Prompt overrides (set via Admin panel)
   table1Prompt?: string;
   table2Prompt?: string;
+  // Persisted markdown output (needed for Table 2 regen dependency on Table 1)
+  table1Markdown?: string;
+  table2Markdown?: string;
+  // Version history for regenerated tables (newest first)
+  table1Versions?: TableVersion[];
+  table2Versions?: TableVersion[];
+  // Index into versions array (0 = most recent); undefined means latest
+  table1ActiveVersion?: number;
+  table2ActiveVersion?: number;
+  // Guards against concurrent regeneration
+  regeneratingTable?: 'table1' | 'table2' | null;
   // Per-run processing log (persisted for cross-instance SSE replay)
   processingLogs?: Array<{ level: string; message: string; timestamp: string; seq: number }>;
 }
