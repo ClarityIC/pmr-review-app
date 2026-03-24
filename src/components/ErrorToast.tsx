@@ -47,7 +47,6 @@ export function useErrors() {
   const addError = React.useCallback((message: string) => {
     const id = Math.random().toString(36).slice(2, 9);
     setErrors(prev => [...prev, { id, message }]);
-    setTimeout(() => setErrors(prev => prev.filter(e => e.id !== id)), 10_000);
   }, []);
 
   const removeError = React.useCallback((id: string) => {

@@ -128,7 +128,11 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
       const formData = new FormData();
       files.forEach(f => formData.append('files', f));
       const res = await fetch(`/api/cases/${id}/upload`, { method: 'POST', body: formData });
-      if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Upload failed'); }
+      if (!res.ok) {
+        let msg = 'Upload failed';
+        try { const d = await res.json(); msg = d.error || msg; } catch {}
+        throw new Error(msg);
+      }
 
       // Update local case status immediately so SSE sub kicks in
       setCaseData((prev: any) => prev ? { ...prev, status: 'processing' } : prev);
@@ -266,28 +270,40 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
           {/* ── Hidden file input (shared) ── */}
           <input ref={fileInputRef} type="file" accept="application/pdf" multiple className="hidden" onChange={onFilePick} />
 
-          {/* ── Large drop zone: shown when no files staged, no results, not processing ── */}
-          {!hasResults && !isProcessing && pendingFiles.length === 0 && (
-            <div className="p-6">
+          {/* ── Drop zone: consistent size whether or not files are staged ── */}
+          {!hasResults && !isProcessing && (
+            <div className="p-6 space-y-3">
               <div
                 onDragOver={e => { e.preventDefault(); setDragging(true); }}
                 onDragLeave={() => setDragging(false)}
                 onDrop={onDrop}
                 onClick={() => fileInputRef.current?.click()}
                 className={cn(
-                  'border-2 border-dashed rounded-2xl p-12 text-center cursor-pointer transition-all',
+                  'border-2 border-dashed rounded-2xl py-8 px-12 text-center cursor-pointer transition-all',
                   dragging
                     ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-950/30'
                     : 'border-slate-300 dark:border-slate-600 hover:border-indigo-400 hover:bg-slate-50 dark:hover:bg-slate-800/50'
                 )}
               >
                 <UploadCloud className={cn('w-12 h-12 mx-auto mb-4', dragging ? 'text-indigo-500' : 'text-slate-400')} />
-                <p className="text-base font-medium text-slate-700 dark:text-slate-300 mb-1">Drop PDF(s) here or click to upload</p>
-                <p className="text-sm text-slate-500">One or more PDF files up to 2 GB each</p>
+                {pendingFiles.length > 0 ? (
+                  <>
+                    <p className="text-base font-medium text-slate-700 dark:text-slate-300 mb-1">
+                      {pendingFiles.length} file{pendingFiles.length !== 1 ? 's' : ''} added — drop more or click to add
+                    </p>
+                    <p className="text-sm text-slate-500">Review the list below, then click Start Processing</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-base font-medium text-slate-700 dark:text-slate-300 mb-1">Drop PDF(s) here or click to upload</p>
+                    <p className="text-sm text-slate-500">One or more PDF files up to 2 GB each</p>
+                  </>
+                )}
               </div>
 
-              {hasError && (
-                <div className="mt-4 p-4 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 rounded-xl flex items-start gap-3">
+              {/* Error banner (only when no files staged) */}
+              {hasError && pendingFiles.length === 0 && (
+                <div className="p-4 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 rounded-xl flex items-start gap-3">
                   <AlertCircle className="w-4 h-4 text-rose-500 mt-0.5 shrink-0" />
                   <div>
                     <p className="text-sm font-medium text-rose-800 dark:text-rose-300">Processing failed</p>
@@ -296,41 +312,62 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                   </div>
                 </div>
               )}
+
+              {/* Staged file list */}
+              {pendingFiles.length > 0 && (
+                <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl overflow-hidden shadow-sm">
+                  <div className="px-5 py-3.5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                    <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+                      {pendingFiles.length} file{pendingFiles.length !== 1 ? 's' : ''} ready to process
+                    </p>
+                    <button
+                      onClick={() => setPendingFiles([])}
+                      className="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+                    >
+                      Clear all
+                    </button>
+                  </div>
+                  <ul className="divide-y divide-slate-50 dark:divide-slate-800">
+                    {pendingFiles.map((f, idx) => (
+                      <li key={idx} className="flex items-center gap-3 px-5 py-3">
+                        <FileText className="w-4 h-4 text-slate-400 shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-slate-800 dark:text-slate-200 truncate">{f.name}</p>
+                          <p className="text-xs text-slate-400">{formatBytes(f.size)}</p>
+                        </div>
+                        <button
+                          onClick={() => setPendingFiles(prev => prev.filter((_, i) => i !== idx))}
+                          className="p-1 text-slate-300 hover:text-rose-500 dark:hover:text-rose-400 transition-colors"
+                          title="Remove"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="px-5 py-4 bg-slate-50 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-800 flex justify-end">
+                    <button
+                      onClick={startProcessing}
+                      className="flex items-center gap-2 px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-xl transition-colors shadow-sm"
+                    >
+                      <Play className="w-4 h-4" />
+                      Start Processing
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
-          {/* ── Staged files panel: shown when files are queued, not yet processing ── */}
-          {pendingFiles.length > 0 && !isProcessing && (
-            <div className="p-6 space-y-3">
-              {/* Compact add-more drop zone */}
-              <div
-                onDragOver={e => { e.preventDefault(); setDragging(true); }}
-                onDragLeave={() => setDragging(false)}
-                onDrop={onDrop}
-                onClick={() => fileInputRef.current?.click()}
-                className={cn(
-                  'border-2 border-dashed rounded-xl px-5 py-3 flex items-center gap-3 cursor-pointer transition-all',
-                  dragging
-                    ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-950/30'
-                    : 'border-slate-200 dark:border-slate-700 hover:border-indigo-400 hover:bg-slate-50 dark:hover:bg-slate-800/50'
-                )}
-              >
-                <UploadCloud className={cn('w-5 h-5 shrink-0', dragging ? 'text-indigo-500' : 'text-slate-400')} />
-                <p className="text-sm text-slate-500 dark:text-slate-400">Drop more PDFs here, or click to add</p>
-              </div>
-
-              {/* File list card */}
+          {/* ── Staged files panel on results screen (above tables) ── */}
+          {hasResults && pendingFiles.length > 0 && !isProcessing && (
+            <div className="px-6 pt-4 space-y-2">
               <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl overflow-hidden shadow-sm">
                 <div className="px-5 py-3.5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
                   <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">
                     {pendingFiles.length} file{pendingFiles.length !== 1 ? 's' : ''} ready to process
                   </p>
-                  <button
-                    onClick={() => setPendingFiles([])}
-                    className="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
-                  >
-                    Clear all
-                  </button>
+                  <button onClick={() => setPendingFiles([])} className="text-xs text-slate-400 hover:text-slate-600 transition-colors">Clear all</button>
                 </div>
                 <ul className="divide-y divide-slate-50 dark:divide-slate-800">
                   {pendingFiles.map((f, idx) => (
@@ -340,23 +377,13 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                         <p className="text-sm font-medium text-slate-800 dark:text-slate-200 truncate">{f.name}</p>
                         <p className="text-xs text-slate-400">{formatBytes(f.size)}</p>
                       </div>
-                      <button
-                        onClick={() => setPendingFiles(prev => prev.filter((_, i) => i !== idx))}
-                        className="p-1 text-slate-300 hover:text-rose-500 dark:hover:text-rose-400 transition-colors"
-                        title="Remove"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
+                      <button onClick={() => setPendingFiles(prev => prev.filter((_, i) => i !== idx))} className="p-1 text-slate-300 hover:text-rose-500 transition-colors"><X className="w-4 h-4" /></button>
                     </li>
                   ))}
                 </ul>
                 <div className="px-5 py-4 bg-slate-50 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-800 flex justify-end">
-                  <button
-                    onClick={startProcessing}
-                    className="flex items-center gap-2 px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-xl transition-colors shadow-sm"
-                  >
-                    <Play className="w-4 h-4" />
-                    Start Processing
+                  <button onClick={startProcessing} className="flex items-center gap-2 px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-xl transition-colors shadow-sm">
+                    <Play className="w-4 h-4" /> Start Processing
                   </button>
                 </div>
               </div>
@@ -375,7 +402,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
           )}
 
           {/* ── Results: re-upload button when complete ── */}
-          {hasResults && pendingFiles.length === 0 && !isProcessing && (
+          {hasResults && !isProcessing && pendingFiles.length === 0 && (
             <div className="px-6 pt-4 flex justify-end">
               <button
                 onClick={() => fileInputRef.current?.click()}

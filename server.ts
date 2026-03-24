@@ -59,8 +59,10 @@ const upload = multer({
   dest: UPLOAD_DIR,
   limits: { fileSize: 2 * 1024 * 1024 * 1024 },  // 2 GB
   fileFilter: (_req, file, cb) => {
-    if (file.mimetype === 'application/pdf') cb(null, true);
-    else cb(new Error(`Only PDF files are accepted. Received: ${file.mimetype}`));
+    const byMime = file.mimetype === 'application/pdf' || file.mimetype === 'application/x-pdf';
+    const byExt  = file.originalname.toLowerCase().endsWith('.pdf');
+    if (byMime || byExt) cb(null, true);
+    else cb(new Error(`Only PDF files are accepted.`));
   },
 });
 
@@ -148,29 +150,33 @@ app.delete('/api/cases/:id', async (req: Request, res: Response) => {
 // ── File upload → triggers pipeline ─────────────────────────────────────────
 app.post('/api/cases/:id/upload',
   upload.array('files', 20),
-  async (req: Request, res: Response) => {
-    const caseRecord = await getCase(req.params.id);
-    if (!caseRecord) return res.status(404).json({ error: 'Case not found' });
+  async (req: Request, res: Response, next: Function) => {
+    try {
+      const caseRecord = await getCase(req.params.id);
+      if (!caseRecord) return res.status(404).json({ error: 'Case not found' });
 
-    const uploadedFiles = req.files as Express.Multer.File[];
-    if (!uploadedFiles?.length) return res.status(400).json({ error: 'No files uploaded' });
+      const uploadedFiles = req.files as Express.Multer.File[];
+      if (!uploadedFiles?.length) return res.status(400).json({ error: 'No files uploaded' });
 
-    const user = (req as any).user;
-    const files: FileInput[] = uploadedFiles.map(f => ({
-      fileId: uuidv4(),
-      fileName: f.originalname,
-      localFilePath: f.path,
-    }));
+      const user = (req as any).user;
+      const files: FileInput[] = uploadedFiles.map(f => ({
+        fileId: uuidv4(),
+        fileName: f.originalname,
+        localFilePath: f.path,
+      }));
 
-    // Respond immediately — pipeline runs async
-    res.status(202).json({ fileIds: files.map(f => f.fileId), message: 'Upload accepted — processing started' });
+      // Respond immediately — pipeline runs async
+      res.status(202).json({ fileIds: files.map(f => f.fileId), message: 'Upload accepted — processing started' });
 
-    // Fire and forget (logs stream via SSE)
-    runPipeline({
-      caseId: req.params.id,
-      files,
-      createdBy: user.email,
-    }).catch(e => console.error('[server] Pipeline error:', e));
+      // Fire and forget (logs stream via SSE)
+      runPipeline({
+        caseId: req.params.id,
+        files,
+        createdBy: user.email,
+      }).catch(e => console.error('[server] Pipeline error:', e));
+    } catch (e: any) {
+      next(e);
+    }
   }
 );
 
@@ -366,6 +372,16 @@ if (IS_PROD) {
   });
   app.use(vite.middlewares);
 }
+
+// ── Global JSON error handler (catches multer errors + any uncaught next(err)) ─
+app.use((err: any, _req: Request, res: Response, _next: Function) => {
+  const status  = err.status || (err.code === 'LIMIT_FILE_SIZE' ? 413 : 500);
+  const message = err.code === 'LIMIT_FILE_SIZE'
+    ? 'File exceeds the 2 GB size limit.'
+    : (err.message || 'Internal server error');
+  console.error('[server] Error:', err.code || err.message);
+  if (!res.headersSent) res.status(status).json({ error: message });
+});
 
 app.listen(PORT, () => {
   console.log(`\n🚀 PMR Review App running at http://localhost:${PORT}`);
