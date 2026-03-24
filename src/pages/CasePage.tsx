@@ -138,16 +138,37 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
     setLogDrawerOpen(true);
 
     try {
-      const formData = new FormData();
-      files.forEach(f => formData.append('files', f));
-      const res = await fetch(`/api/cases/${id}/upload`, { method: 'POST', body: formData });
-      if (!res.ok) {
-        let serverMsg = '';
-        try { const d = await res.json(); serverMsg = d.error || ''; } catch {}
-        console.error(`[upload] Server error ${res.status}:`, serverMsg);
-        if (res.status === 404) throw new Error('not_found');
+      // 1. Get signed upload URLs from the server
+      const urlRes = await fetch(`/api/cases/${id}/upload-urls`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ files: files.map(f => ({ name: f.name, size: f.size })) }),
+      });
+      if (!urlRes.ok) {
+        if (urlRes.status === 404) throw new Error('not_found');
         throw new Error('failed');
       }
+      const { files: signedFiles } = await urlRes.json() as {
+        files: { fileId: string; name: string; gcsPath: string; url: string }[];
+      };
+
+      // 2. Upload each file directly to GCS via signed URL (bypasses Cloud Run size limit)
+      for (let i = 0; i < files.length; i++) {
+        const uploadRes = await fetch(signedFiles[i].url, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/pdf' },
+          body: files[i],
+        });
+        if (!uploadRes.ok) throw new Error('failed');
+      }
+
+      // 3. Tell the server all files are uploaded — start the pipeline
+      const processRes = await fetch(`/api/cases/${id}/process`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ files: signedFiles.map(f => ({ fileId: f.fileId, name: f.name, gcsPath: f.gcsPath })) }),
+      });
+      if (!processRes.ok) throw new Error('failed');
 
       // Update local case status immediately so SSE sub kicks in
       setCaseData((prev: any) => prev ? { ...prev, status: 'processing' } : prev);

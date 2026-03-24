@@ -23,7 +23,7 @@ import { getEnv, getDocAI } from './server/config.js';
 import {
   createCase, getCase, listCases, updateCase, deleteCase,
 } from './server/cases.js';
-import { signedReadUrl, getBucketUsageBytes, listObjects, deletePrefix, downloadFile, BUCKET_AUTH, BUCKET_STAGING, BUCKET_OUTPUT } from './server/gcs.js';
+import { signedReadUrl, signedWriteUrl, getBucketUsageBytes, listObjects, deletePrefix, deleteObject, downloadFile, BUCKET_AUTH, BUCKET_STAGING, BUCKET_OUTPUT } from './server/gcs.js';
 import { deleteCaseRows, deleteOrphanRows } from './server/bigquery.js';
 import { runPipeline, cancelPipeline, getActiveLRONames, FileInput } from './server/pipeline/orchestrator.js';
 import { runPreflight } from './server/preflight.js';
@@ -240,7 +240,71 @@ app.post('/api/cases/:id/reprocess', async (req: Request, res: Response) => {
   }
 });
 
-// ── File upload → triggers pipeline ─────────────────────────────────────────
+// ── Signed-URL upload flow (bypasses Cloud Run 32 MiB body limit) ───────────
+// Step 1: Client requests signed upload URLs for each file
+app.post('/api/cases/:id/upload-urls',
+  async (req: Request, res: Response, next: Function) => {
+    try {
+      const caseRecord = await getCase(req.params.id);
+      if (!caseRecord) return res.status(404).json({ error: 'Case not found' });
+
+      const { files } = req.body as { files: { name: string; size: number }[] };
+      if (!files?.length) return res.status(400).json({ error: 'No files specified' });
+
+      const result = await Promise.all(files.map(async (f) => {
+        const fileId = uuidv4();
+        const gcsPath = `uploads/${req.params.id}/${fileId}/${f.name}`;
+        const url = await signedWriteUrl(BUCKET_AUTH(), gcsPath);
+        return { fileId, name: f.name, gcsPath, url };
+      }));
+
+      res.json({ files: result });
+    } catch (e: any) {
+      next(e);
+    }
+  }
+);
+
+// Step 2: Client signals all files are uploaded → start pipeline
+app.post('/api/cases/:id/process',
+  async (req: Request, res: Response, next: Function) => {
+    try {
+      const caseRecord = await getCase(req.params.id);
+      if (!caseRecord) return res.status(404).json({ error: 'Case not found' });
+
+      const { files: uploadedFiles } = req.body as { files: { fileId: string; name: string; gcsPath: string }[] };
+      if (!uploadedFiles?.length) return res.status(400).json({ error: 'No files specified' });
+
+      const user = (req as any).user;
+
+      // Download each file from GCS to local temp so the pipeline can read them
+      const pipelineFiles: FileInput[] = [];
+      for (const f of uploadedFiles) {
+        const localPath = path.join(UPLOAD_DIR, `${f.fileId}.pdf`);
+        await downloadFile(BUCKET_AUTH(), f.gcsPath, localPath);
+        pipelineFiles.push({ fileId: f.fileId, fileName: f.name, localFilePath: localPath });
+      }
+
+      // Clean up the temporary GCS upload objects (pipeline step 1 will re-upload to the canonical path)
+      for (const f of uploadedFiles) {
+        await deleteObject(BUCKET_AUTH(), f.gcsPath).catch(() => {});
+      }
+
+      res.status(202).json({ message: 'Processing started' });
+
+      // Fire and forget (logs stream via SSE)
+      runPipeline({
+        caseId: req.params.id,
+        files: pipelineFiles,
+        createdBy: user.email,
+      }).catch(e => console.error('[server] Pipeline error:', e));
+    } catch (e: any) {
+      next(e);
+    }
+  }
+);
+
+// ── Legacy file upload (small files via multer — kept as fallback) ───────────
 app.post('/api/cases/:id/upload',
   upload.array('files', 20),
   async (req: Request, res: Response, next: Function) => {

@@ -58,6 +58,17 @@ export async function signedReadUrl(bucket: string, destPath: string, expiresMin
   return url;
 }
 
+/** Generate a short-lived signed URL for uploading (writing) a GCS object. */
+export async function signedWriteUrl(bucket: string, destPath: string, contentType = 'application/pdf', expiresMinutes = 60): Promise<string> {
+  const [url] = await getStorage().bucket(bucket).file(destPath).getSignedUrl({
+    version: 'v4',
+    action: 'write',
+    expires: Date.now() + expiresMinutes * 60 * 1000,
+    contentType,
+  });
+  return url;
+}
+
 /** Get total bytes used across a bucket. */
 export async function getBucketUsageBytes(bucket: string): Promise<number> {
   try {
