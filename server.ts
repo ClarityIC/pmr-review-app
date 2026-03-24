@@ -95,12 +95,16 @@ const upload = multer({
 // ── Express app ─────────────────────────────────────────────────────────────
 const app = express();
 
+// Cloud Run sits behind a Google Front End proxy — trust one hop so
+// express-rate-limit (and req.ip) use the real client IP from X-Forwarded-For.
+if (IS_PROD) app.set('trust proxy', 1);
+
 // Security
 app.use(helmet({
   contentSecurityPolicy: false, // Vite injects inline scripts in dev
 }));
 app.use(cors({ origin: false }));
-app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 500, standardHeaders: true, legacyHeaders: false }));
+app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 500, standardHeaders: true, legacyHeaders: false, validate: { xForwardedForHeader: false, trustProxy: false } }));
 
 const COOKIE_SECRET = getEnv('SESSION_SECRET') || 'dev-secret-change-me';
 app.use(cookieParser(COOKIE_SECRET));

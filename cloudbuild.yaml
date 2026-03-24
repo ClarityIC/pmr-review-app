@@ -31,6 +31,7 @@ steps:
       - '--timeout=3600'         # max request timeout (keeps SSE alive up to 1 hour)
       - '--no-cpu-throttling'    # CPU always allocated — background pipeline keeps running after HTTP response
       - '--min-instances=1'      # never scale to zero — instance stays alive between requests
+      - '--http2'                # enables end-to-end HTTP/2 — supports large uploads (>32 MiB default limit)
       - '--quiet'
 
 images:
