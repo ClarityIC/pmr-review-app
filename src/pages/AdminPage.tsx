@@ -146,7 +146,7 @@ function StorageTab({ addError }: { addError: (m: string) => void }) {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [purging, setPurging] = useState(false);
-  const [purgeResult, setPurgeResult] = useState<{ purgedCases: number; orphanIds: string[] } | null>(null);
+  const [purgeResult, setPurgeResult] = useState<{ purgedCases: number; orphanIds: string[]; stagingScrubbed: number } | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -237,15 +237,16 @@ function StorageTab({ addError }: { addError: (m: string) => void }) {
         {purgeResult && (
           <div className={cn(
             'rounded-xl px-4 py-3 flex items-start gap-3',
-            purgeResult.purgedCases > 0
+            (purgeResult.purgedCases > 0 || purgeResult.stagingScrubbed > 0)
               ? 'bg-emerald-50 border border-emerald-200 dark:bg-emerald-950/20 dark:border-emerald-800'
               : 'bg-slate-50 border border-slate-200 dark:bg-slate-800/50 dark:border-slate-700',
           )}>
             <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
             <p className="text-sm text-emerald-800 dark:text-emerald-300">
-              {purgeResult.purgedCases > 0
-                ? `${purgeResult.purgedCases} deleted case${purgeResult.purgedCases !== 1 ? 's' : ''} purged from Cloud Storage and BigQuery.`
-                : 'No orphaned data found — storage is clean.'}
+              {(purgeResult.purgedCases > 0 || purgeResult.stagingScrubbed > 0) ? [
+                purgeResult.purgedCases > 0 && `${purgeResult.purgedCases} deleted case${purgeResult.purgedCases !== 1 ? 's' : ''} purged from Cloud Storage and BigQuery.`,
+                purgeResult.stagingScrubbed > 0 && `Staging data scrubbed for ${purgeResult.stagingScrubbed} existing case${purgeResult.stagingScrubbed !== 1 ? 's' : ''} (cancelled/failed runs).`,
+              ].filter(Boolean).join(' ') : 'No orphaned or stale staging data found — storage is clean.'}
             </p>
           </div>
         )}

@@ -145,9 +145,11 @@ app.delete('/api/cases/:id', async (req: Request, res: Response) => {
     const { id } = req.params;
     await cancelPipeline(id);              // cancel any active DocAI LROs first
     await deleteCase(id);                  // remove Firestore document
-    // Purge GCS + BigQuery in the background (non-blocking)
+    // Purge GCS (all 3 buckets) + BigQuery in the background (non-blocking)
     Promise.all([
       deletePrefix(BUCKET_AUTH(), `cases/${id}/`),
+      deletePrefix(BUCKET_STAGING(), `cases/${id}/`),
+      deletePrefix(BUCKET_OUTPUT(), `cases/${id}/`),
       deleteCaseRows(id),
     ]).catch(e => console.error(`[delete] Purge error for ${id}:`, e));
     res.json({ ok: true });
@@ -159,8 +161,14 @@ app.delete('/api/cases/:id', async (req: Request, res: Response) => {
 // ── Cancel active processing (keeps the case, reverts to draft) ───────────────
 app.post('/api/cases/:id/cancel', async (req: Request, res: Response) => {
   try {
-    await cancelPipeline(req.params.id);
-    await updateCase(req.params.id, { status: 'draft' });
+    const { id } = req.params;
+    await cancelPipeline(id);
+    await updateCase(id, { status: 'draft' });
+    // Step 3 won't run after a cancel, so scrub any staging files left behind
+    Promise.all([
+      deletePrefix(BUCKET_STAGING(), `cases/${id}/`),
+      deletePrefix(BUCKET_OUTPUT(), `cases/${id}/`),
+    ]).catch(e => console.error(`[cancel] Staging cleanup error for ${id}:`, e));
     res.json({ ok: true });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
@@ -329,22 +337,55 @@ app.post('/api/admin/purge-orphans', async (_req: Request, res: Response) => {
     const cases = await listCases();
     const knownIds = new Set(cases.map(c => c.id));
 
-    // GCS: list all objects under cases/ prefix, extract unique caseIds
-    const objects = await listObjects(BUCKET_AUTH(), 'cases/');
-    const gcsCaseIds = new Set(
-      objects.map(o => o.name.split('/')[1]).filter(Boolean),
+    // List objects across all 3 buckets to find orphaned case IDs
+    const [authObjs, stagingObjs, outputObjs] = await Promise.all([
+      listObjects(BUCKET_AUTH(), 'cases/'),
+      listObjects(BUCKET_STAGING(), 'cases/'),
+      listObjects(BUCKET_OUTPUT(), 'cases/'),
+    ]);
+
+    const extractIds = (objs: { name: string }[]) =>
+      objs.map(o => o.name.split('/')[1]).filter(Boolean);
+
+    const allGcsCaseIds = new Set([
+      ...extractIds(authObjs),
+      ...extractIds(stagingObjs),
+      ...extractIds(outputObjs),
+    ]);
+
+    // Delete from all 3 buckets for cases no longer in Firestore
+    const orphanIds = [...allGcsCaseIds].filter(id => !knownIds.has(id));
+    await Promise.all(
+      orphanIds.flatMap(id => [
+        deletePrefix(BUCKET_AUTH(), `cases/${id}/`),
+        deletePrefix(BUCKET_STAGING(), `cases/${id}/`),
+        deletePrefix(BUCKET_OUTPUT(), `cases/${id}/`),
+      ]),
     );
 
-    // Delete GCS prefixes for cases no longer in Firestore
-    const orphanIds = [...gcsCaseIds].filter(id => !knownIds.has(id));
+    // Also scrub staging buckets for known cases that are NOT currently processing
+    // (handles leftover chunks from cancelled or failed pipeline runs)
+    const stagingCaseIds = new Set(extractIds(stagingObjs));
+    const outputCaseIds = new Set(extractIds(outputObjs));
+    const nonProcessingKnown = cases.filter(c => c.status !== 'processing');
+    const stagingScrubIds = nonProcessingKnown
+      .filter(c => stagingCaseIds.has(c.id) || outputCaseIds.has(c.id))
+      .map(c => c.id);
     await Promise.all(
-      orphanIds.map(id => deletePrefix(BUCKET_AUTH(), `cases/${id}/`)),
+      stagingScrubIds.flatMap(id => [
+        deletePrefix(BUCKET_STAGING(), `cases/${id}/`),
+        deletePrefix(BUCKET_OUTPUT(), `cases/${id}/`),
+      ]),
     );
 
     // BigQuery: delete rows whose case_id is not in the known set
     await deleteOrphanRows([...knownIds]);
 
-    res.json({ purgedCases: orphanIds.length, orphanIds });
+    res.json({
+      purgedCases: orphanIds.length,
+      orphanIds,
+      stagingScrubbed: stagingScrubIds.length,
+    });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
