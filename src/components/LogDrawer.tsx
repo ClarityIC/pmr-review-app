@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { ChevronDown, ChevronUp, Terminal } from 'lucide-react';
+import { ChevronDown, ChevronUp, Activity } from 'lucide-react';
 import { cn } from '../lib/utils.js';
 
 export interface LogEntry {
@@ -14,15 +14,18 @@ interface Props {
   onToggle: () => void;
 }
 
-const LEVEL_COLOR: Record<LogEntry['level'], string> = {
-  info:    'text-slate-500',
-  success: 'text-emerald-600',
-  error:   'text-rose-600',
-  warn:    'text-amber-600',
+const LEVEL_DOT: Record<LogEntry['level'], string> = {
+  info:    'bg-slate-400',
+  success: 'bg-emerald-500',
+  error:   'bg-rose-500',
+  warn:    'bg-amber-400',
 };
 
-const LEVEL_PREFIX: Record<LogEntry['level'], string> = {
-  info: '·', success: '✓', error: '✗', warn: '⚠',
+const LEVEL_TEXT: Record<LogEntry['level'], string> = {
+  info:    'text-slate-600 dark:text-slate-400',
+  success: 'text-emerald-700 dark:text-emerald-400',
+  error:   'text-rose-700 dark:text-rose-400',
+  warn:    'text-amber-700 dark:text-amber-400',
 };
 
 export default function LogDrawer({ logs, isOpen, onToggle }: Props) {
@@ -33,38 +36,47 @@ export default function LogDrawer({ logs, isOpen, onToggle }: Props) {
   }, [logs, isOpen]);
 
   const formatTime = (ts: string) => {
-    try { return new Date(ts).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }); }
-    catch { return ts; }
+    try {
+      return new Date(ts).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
+    } catch { return ts; }
   };
 
   return (
-    <div className="border-t border-slate-200 bg-white">
+    <div className="border-t border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
       <button
         onClick={onToggle}
-        className="w-full flex items-center justify-between px-4 py-2 text-sm text-slate-500 hover:text-slate-700 hover:bg-slate-50 transition-colors"
+        className="w-full flex items-center justify-between px-5 py-3 text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
       >
-        <div className="flex items-center gap-2">
-          <Terminal className="w-3.5 h-3.5" />
-          <span className="font-mono text-xs">Processing Log</span>
+        <div className="flex items-center gap-2.5">
+          <Activity className="w-4 h-4 text-slate-400" />
+          <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Processing Progress</span>
           {logs.length > 0 && (
-            <span className="bg-slate-100 text-slate-500 text-[10px] px-1.5 py-0.5 rounded-full">{logs.length}</span>
+            <span className="bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 text-xs px-2 py-0.5 rounded-full">
+              {logs.length}
+            </span>
           )}
         </div>
         {isOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
       </button>
 
       {isOpen && (
-        <div className="h-48 overflow-y-auto px-4 py-2 space-y-0.5 bg-white border-t border-slate-100">
+        <div className="h-56 overflow-y-auto bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800">
           {logs.length === 0 ? (
-            <p className="text-slate-400 text-xs font-mono py-2">Waiting for processing to start...</p>
+            <p className="text-sm text-slate-400 px-5 py-4">Waiting for processing to start…</p>
           ) : (
-            logs.map((entry, i) => (
-              <div key={i} className="log-entry flex items-start gap-2 text-[11px] leading-relaxed">
-                <span className="text-slate-400 shrink-0 tabular-nums">{formatTime(entry.timestamp)}</span>
-                <span className={cn('shrink-0 w-3', LEVEL_COLOR[entry.level])}>{LEVEL_PREFIX[entry.level]}</span>
-                <span className={cn(LEVEL_COLOR[entry.level])}>{entry.message}</span>
-              </div>
-            ))
+            <div className="divide-y divide-slate-50 dark:divide-slate-800/50">
+              {logs.map((entry, i) => (
+                <div key={i} className="flex items-start gap-3 px-5 py-2.5">
+                  <div className={cn('mt-1.5 w-2 h-2 rounded-full shrink-0', LEVEL_DOT[entry.level])} />
+                  <span className={cn('flex-1 text-sm leading-relaxed', LEVEL_TEXT[entry.level])}>
+                    {entry.message}
+                  </span>
+                  <span className="text-xs text-slate-400 shrink-0 tabular-nums mt-0.5">
+                    {formatTime(entry.timestamp)}
+                  </span>
+                </div>
+              ))}
+            </div>
           )}
           <div ref={endRef} />
         </div>

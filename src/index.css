@@ -37,5 +37,3 @@
 ::-webkit-scrollbar-thumb { @apply bg-slate-300 rounded-full; }
 .dark ::-webkit-scrollbar-thumb { @apply bg-slate-600; }
 
-/* Log drawer monospace */
-.log-entry { font-family: ui-monospace, 'Cascadia Code', monospace; }

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   UploadCloud, Loader2, Download, ChevronLeft, ChevronRight, X,
-  PanelRightClose, PanelRightOpen, FileText, RefreshCw, AlertCircle, CheckCircle2,
+  PanelRightClose, PanelRightOpen, FileText, RefreshCw, AlertCircle, CheckCircle2, Play,
 } from 'lucide-react';
 import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
@@ -39,6 +39,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
   // Upload
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // SSE log stream
@@ -105,14 +106,20 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
     return () => es.close();
   }, [caseData?.status, id]);
 
-  // ── File upload ───────────────────────────────────────────────────────────
-  const handleUpload = async (files: File[]) => {
-    if (!files.length) return;
+  // ── File staging + upload ─────────────────────────────────────────────────
+  const stageFiles = (files: File[]) => {
     for (const f of files) {
       if (!f.type.includes('pdf')) { addError(`"${f.name}" is not a PDF.`); return; }
       if (f.size > 2 * 1024 * 1024 * 1024) { addError(`"${f.name}" exceeds the 2 GB limit.`); return; }
     }
+    setPendingFiles(prev => {
+      const existing = new Set(prev.map(f => f.name));
+      return [...prev, ...files.filter(f => !existing.has(f.name))];
+    });
+  };
 
+  const handleUpload = async (files: File[]) => {
+    if (!files.length) return;
     setUploading(true);
     setLogs([]);
     setLogDrawerOpen(true);
@@ -132,16 +139,22 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
     }
   };
 
+  const startProcessing = () => {
+    const files = pendingFiles;
+    setPendingFiles([]);
+    handleUpload(files);
+  };
+
   const onFilePick = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []);
-    if (files.length) handleUpload(files);
+    if (files.length) stageFiles(files);
     e.target.value = '';
   };
 
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault(); setDragging(false);
     const files = Array.from(e.dataTransfer.files);
-    if (files.length) handleUpload(files);
+    if (files.length) stageFiles(files);
   };
 
   // ── PDF viewer ─────────────────────────────────────────────────────────────
@@ -250,8 +263,11 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
         {/* ── Main content ── */}
         <div className="flex-1 flex flex-col overflow-auto">
 
-          {/* ── Upload zone (always shown; extra prominent when no files) ── */}
-          {!hasResults && !isProcessing && (
+          {/* ── Hidden file input (shared) ── */}
+          <input ref={fileInputRef} type="file" accept="application/pdf" multiple className="hidden" onChange={onFilePick} />
+
+          {/* ── Large drop zone: shown when no files staged, no results, not processing ── */}
+          {!hasResults && !isProcessing && pendingFiles.length === 0 && (
             <div className="p-6">
               <div
                 onDragOver={e => { e.preventDefault(); setDragging(true); }}
@@ -267,8 +283,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
               >
                 <UploadCloud className={cn('w-12 h-12 mx-auto mb-4', dragging ? 'text-indigo-500' : 'text-slate-400')} />
                 <p className="text-base font-medium text-slate-700 dark:text-slate-300 mb-1">Drop PDF(s) here or click to upload</p>
-                <p className="text-sm text-slate-500">One or more PDF files up to 2 GB each · OCR + AI analysis will begin automatically</p>
-                <input ref={fileInputRef} type="file" accept="application/pdf" multiple className="hidden" onChange={onFilePick} />
+                <p className="text-sm text-slate-500">One or more PDF files up to 2 GB each</p>
               </div>
 
               {hasError && (
@@ -284,6 +299,70 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
             </div>
           )}
 
+          {/* ── Staged files panel: shown when files are queued, not yet processing ── */}
+          {pendingFiles.length > 0 && !isProcessing && (
+            <div className="p-6 space-y-3">
+              {/* Compact add-more drop zone */}
+              <div
+                onDragOver={e => { e.preventDefault(); setDragging(true); }}
+                onDragLeave={() => setDragging(false)}
+                onDrop={onDrop}
+                onClick={() => fileInputRef.current?.click()}
+                className={cn(
+                  'border-2 border-dashed rounded-xl px-5 py-3 flex items-center gap-3 cursor-pointer transition-all',
+                  dragging
+                    ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-950/30'
+                    : 'border-slate-200 dark:border-slate-700 hover:border-indigo-400 hover:bg-slate-50 dark:hover:bg-slate-800/50'
+                )}
+              >
+                <UploadCloud className={cn('w-5 h-5 shrink-0', dragging ? 'text-indigo-500' : 'text-slate-400')} />
+                <p className="text-sm text-slate-500 dark:text-slate-400">Drop more PDFs here, or click to add</p>
+              </div>
+
+              {/* File list card */}
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl overflow-hidden shadow-sm">
+                <div className="px-5 py-3.5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                  <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+                    {pendingFiles.length} file{pendingFiles.length !== 1 ? 's' : ''} ready to process
+                  </p>
+                  <button
+                    onClick={() => setPendingFiles([])}
+                    className="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+                  >
+                    Clear all
+                  </button>
+                </div>
+                <ul className="divide-y divide-slate-50 dark:divide-slate-800">
+                  {pendingFiles.map((f, idx) => (
+                    <li key={idx} className="flex items-center gap-3 px-5 py-3">
+                      <FileText className="w-4 h-4 text-slate-400 shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-slate-800 dark:text-slate-200 truncate">{f.name}</p>
+                        <p className="text-xs text-slate-400">{formatBytes(f.size)}</p>
+                      </div>
+                      <button
+                        onClick={() => setPendingFiles(prev => prev.filter((_, i) => i !== idx))}
+                        className="p-1 text-slate-300 hover:text-rose-500 dark:hover:text-rose-400 transition-colors"
+                        title="Remove"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                <div className="px-5 py-4 bg-slate-50 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-800 flex justify-end">
+                  <button
+                    onClick={startProcessing}
+                    className="flex items-center gap-2 px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-xl transition-colors shadow-sm"
+                  >
+                    <Play className="w-4 h-4" />
+                    Start Processing
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* ── Processing view ── */}
           {isProcessing && (
             <div className="p-6 flex flex-col items-center justify-center min-h-[200px] gap-4">
@@ -296,7 +375,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
           )}
 
           {/* ── Results: re-upload button when complete ── */}
-          {hasResults && (
+          {hasResults && pendingFiles.length === 0 && !isProcessing && (
             <div className="px-6 pt-4 flex justify-end">
               <button
                 onClick={() => fileInputRef.current?.click()}
@@ -304,7 +383,6 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
               >
                 <RefreshCw className="w-3.5 h-3.5" /> Upload more files
               </button>
-              <input ref={fileInputRef} type="file" accept="application/pdf" multiple className="hidden" onChange={onFilePick} />
             </div>
           )}
 
