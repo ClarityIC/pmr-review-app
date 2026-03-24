@@ -4,7 +4,7 @@
  * Dev:  tsx server.ts          (Vite middleware + Express API on one port)
  * Prod: node dist/server.js    (serves dist/client as static files)
  */
-import express, { Request, Response, NextFunction } from 'express';
+import express, { Request, Response } from 'express';
 import session from 'express-session';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
@@ -23,7 +23,7 @@ import { getEnv, getDocAI } from './server/config.js';
 import {
   createCase, getCase, listCases, updateCase, deleteCase,
 } from './server/cases.js';
-import { signedReadUrl, getBucketUsageBytes, listObjects, deletePrefix, BUCKET_AUTH, BUCKET_STAGING, BUCKET_OUTPUT } from './server/gcs.js';
+import { signedReadUrl, getBucketUsageBytes, listObjects, deletePrefix, downloadFile, BUCKET_AUTH, BUCKET_STAGING, BUCKET_OUTPUT } from './server/gcs.js';
 import { deleteCaseRows, deleteOrphanRows } from './server/bigquery.js';
 import { runPipeline, cancelPipeline, getActiveLRONames, FileInput } from './server/pipeline/orchestrator.js';
 import { runPreflight } from './server/preflight.js';
@@ -54,6 +54,29 @@ function cleanupStaleFiles(dir: string, maxAgeMs = 2 * 60 * 60 * 1000) {
 }
 cleanupStaleFiles(UPLOAD_DIR);
 cleanupStaleFiles(path.join(process.cwd(), 'chunks'));
+
+// ── Startup recovery: reset any cases stuck in 'processing' from a dead instance ──
+// The pipeline runs as a background async task. If Cloud Run kills the instance
+// mid-run (scale-down, restart, deploy), any case still marked 'processing' is
+// orphaned — the pipeline will never complete. Reset them to 'error' so users
+// can retry via the Retry Processing button.
+setImmediate(async () => {
+  try {
+    const { listCases: _list, updateCase: _update } = await import('./server/cases.js');
+    const cases = await _list();
+    const stuck = cases.filter(c => c.status === 'processing');
+    if (stuck.length === 0) return;
+    console.log(`[startup] Resetting ${stuck.length} stuck processing case(s) to error`);
+    await Promise.all(
+      stuck.map(c => _update(c.id, {
+        status: 'error',
+        errorMessage: 'Processing was interrupted when the server restarted. Use the "Retry Processing" button to reprocess.',
+      }).catch(() => {})),
+    );
+  } catch (e) {
+    console.error('[startup] Failed to reset stuck cases:', e);
+  }
+});
 
 // ── Multer — 2 GB limit, PDF only ──────────────────────────────────────────
 const upload = multer({
@@ -169,6 +192,43 @@ app.post('/api/cases/:id/cancel', async (req: Request, res: Response) => {
       deletePrefix(BUCKET_OUTPUT(), `cases/${id}/`),
     ]).catch(e => console.error(`[cancel] Staging cleanup error for ${id}:`, e));
     res.json({ ok: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Retry processing using files already in the authoritative GCS bucket ────────
+// Used when a case is in error state and files are already stored in GCS.
+// Downloads each file to a temp path, then re-runs the full pipeline.
+app.post('/api/cases/:id/reprocess', async (req: Request, res: Response) => {
+  try {
+    const caseRecord = await getCase(req.params.id);
+    if (!caseRecord) return res.status(404).json({ error: 'Case not found' });
+    if (caseRecord.status === 'processing') return res.status(409).json({ error: 'Already processing' });
+    if (!caseRecord.files?.length) return res.status(400).json({ error: 'No files to reprocess' });
+
+    const user = (req as any).user;
+
+    // Respond immediately — download + pipeline run async
+    res.status(202).json({ message: 'Reprocessing started' });
+
+    (async () => {
+      const files: FileInput[] = [];
+      for (const f of caseRecord.files) {
+        const localPath = path.join(UPLOAD_DIR, `${uuidv4()}.pdf`);
+        await downloadFile(f.gcsBucket, f.gcsPath, localPath);
+        files.push({ fileId: f.id, fileName: f.name, localFilePath: localPath });
+      }
+      // Reset files array so the pipeline re-adds them cleanly (no Firestore duplicates)
+      await updateCase(req.params.id, { files: [] });
+      await runPipeline({ caseId: req.params.id, files, createdBy: user.email, reprocess: true });
+    })().catch(async (e) => {
+      console.error('[reprocess]', e);
+      await updateCase(req.params.id, {
+        status: 'error',
+        errorMessage: 'Retry failed — please try again.',
+      }).catch(() => {});
+    });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
@@ -409,7 +469,7 @@ app.get('/api/admin/docai/operations', async (_req: Request, res: Response) => {
     const pendingOperations = (await Promise.all(
       allNames.map(async (name) => {
         try {
-          const [op] = await docai.operationsClient.getOperation({ name });
+          const [op] = await (docai.operationsClient as any).getOperation({ name });
           if (op.done) return null;
           const meta = op.metadata as any;
           const state = meta?.commonMetadata?.state || meta?.state || 'RUNNING';

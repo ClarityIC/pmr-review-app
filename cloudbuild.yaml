@@ -28,6 +28,9 @@ steps:
       - '--image=us-central1-docker.pkg.dev/cic-prior-records-review/pmr-images/pmr-review-app:$COMMIT_SHA'
       - '--region=us-central1'
       - '--platform=managed'
+      - '--timeout=3600'         # max request timeout (keeps SSE alive up to 1 hour)
+      - '--no-cpu-throttling'    # CPU always allocated — background pipeline keeps running after HTTP response
+      - '--min-instances=1'      # never scale to zero — instance stays alive between requests
       - '--quiet'
 
 images:

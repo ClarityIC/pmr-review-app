@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   UploadCloud, Loader2, Download, ChevronLeft, ChevronRight, X,
-  PanelRightClose, PanelRightOpen, FileText, RefreshCw, AlertCircle, CheckCircle2, Play, StopCircle,
+  PanelRightClose, PanelRightOpen, FileText, RefreshCw, AlertCircle, CheckCircle2, Play, StopCircle, RotateCcw,
 } from 'lucide-react';
 import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
@@ -41,6 +41,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
   const [uploading, setUploading] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [cancelling, setCancelling] = useState(false);
+  const [reprocessing, setReprocessing] = useState(false);
   const [cancelledFileInfo, setCancelledFileInfo] = useState<Array<{ name: string; size: number }>>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -171,6 +172,28 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
       addError('Could not cancel processing. Please try again.');
     } finally {
       setCancelling(false);
+    }
+  };
+
+  const handleReprocess = async () => {
+    setReprocessing(true);
+    setLogs([]);
+    setLogDrawerOpen(true);
+    try {
+      const res = await fetch(`/api/cases/${id}/reprocess`, { method: 'POST' });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        console.error('[reprocess]', body.error);
+        if (res.status === 400) addError("No files found to reprocess — please upload the files again.");
+        else addError("Couldn't start reprocessing — please try again.");
+        return;
+      }
+      setCaseData((prev: any) => prev ? { ...prev, status: 'processing' } : prev);
+    } catch (e) {
+      console.error('[reprocess]', e);
+      addError("Couldn't start reprocessing — please try again.");
+    } finally {
+      setReprocessing(false);
     }
   };
 
@@ -330,10 +353,21 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
               {hasError && pendingFiles.length === 0 && (
                 <div className="p-4 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 rounded-xl flex items-start gap-3">
                   <AlertCircle className="w-4 h-4 text-rose-500 mt-0.5 shrink-0" />
-                  <div>
+                  <div className="flex-1">
                     <p className="text-sm font-medium text-rose-800 dark:text-rose-300">Processing failed</p>
                     <p className="text-xs text-rose-600 dark:text-rose-400 mt-0.5">{caseData.errorMessage}</p>
-                    <p className="text-xs text-rose-500 mt-1">Upload the file again to retry.</p>
+                    {caseData.files?.length > 0 ? (
+                      <button
+                        onClick={handleReprocess}
+                        disabled={reprocessing}
+                        className="mt-2 flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-50 rounded-lg transition-colors"
+                      >
+                        {reprocessing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />}
+                        {reprocessing ? 'Starting…' : 'Retry Processing'}
+                      </button>
+                    ) : (
+                      <p className="text-xs text-rose-500 mt-1">Upload the file again to retry.</p>
+                    )}
                   </div>
                 </div>
               )}

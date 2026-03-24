@@ -5,6 +5,8 @@
  *   cic-docai-staging-inputs      — ephemeral ≤500-page chunks
  *   cic-docai-staging-outputs     — ephemeral DocAI JSON outputs
  */
+import { createWriteStream } from 'fs';
+import { pipeline } from 'stream/promises';
 import { getStorage, getEnv } from './config.js';
 
 export const BUCKET_AUTH    = () => getEnv('GCS_AUTHORITATIVE_BUCKET') || 'cic-authoritative-case-files';
@@ -22,6 +24,13 @@ export async function uploadBuffer(buf: Buffer, bucket: string, destPath: string
   const file = getStorage().bucket(bucket).file(destPath);
   await file.save(buf, { contentType });
   return `gs://${bucket}/${destPath}`;
+}
+
+/** Download a GCS object to a local file path. */
+export async function downloadFile(bucket: string, srcPath: string, localDestPath: string): Promise<void> {
+  const readStream = getStorage().bucket(bucket).file(srcPath).createReadStream();
+  const writeStream = createWriteStream(localDestPath);
+  await pipeline(readStream, writeStream);
 }
 
 /** Delete a single GCS object. */
