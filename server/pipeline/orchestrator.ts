@@ -9,12 +9,14 @@
  */
 import { EventEmitter } from 'events';
 import { statSync, unlinkSync } from 'fs';
+import { FieldValue } from '@google-cloud/firestore';
 import { step1 } from './step1-chunk.js';
 import { step2 } from './step2-docai.js';
 import { step3 } from './step3-reassemble.js';
 import { step4 } from './step4-table1.js';
 import { step5 } from './step5-table2.js';
 import { updateCase, addFileToCase, getCase } from '../cases.js';
+import { getFirestore } from '../config.js';
 import { BUCKET_AUTH } from '../gcs.js';
 import { ensureTable0Exists, deleteCaseRows } from '../bigquery.js';
 
@@ -28,18 +30,20 @@ pipelineEmitter.setMaxListeners(100);
 // Track active runs for deduplication — keyed by caseId
 const activeRuns = new Set<string>();
 
-// In-memory log buffer — replayed to reconnecting SSE clients
-const logBuffers = new Map<string, Array<{ level: LogLevel; message: string; timestamp: string }>>();
-
-export function getLogBuffer(caseId: string) {
-  return logBuffers.get(caseId) ?? [];
-}
+// Per-run sequence counter — makes each Firestore log entry unique for arrayUnion
+const logSeqs = new Map<string, number>();
 
 export function emitLog(caseId: string, level: LogLevel, message: string) {
-  const entry = { level, message, timestamp: new Date().toISOString() };
-  if (!logBuffers.has(caseId)) logBuffers.set(caseId, []);
-  logBuffers.get(caseId)!.push(entry);
+  const seq = (logSeqs.get(caseId) ?? 0) + 1;
+  logSeqs.set(caseId, seq);
+  const entry = { level, message, timestamp: new Date().toISOString(), seq };
   pipelineEmitter.emit(`log:${caseId}`, entry);
+  // Persist to Firestore so any Cloud Run instance can replay on SSE reconnect
+  try {
+    getFirestore().collection('cases').doc(caseId)
+      .update({ processingLogs: FieldValue.arrayUnion(entry) })
+      .catch(() => {});
+  } catch {}
   const prefix = level === 'error' ? '✗' : level === 'success' ? '✓' : level === 'warn' ? '⚠' : '·';
   console.log(`[pipeline:${caseId.slice(0, 8)}] ${prefix} ${message}`);
 }
@@ -71,7 +75,13 @@ export async function runPipeline(opts: RunOptions): Promise<void> {
     return;
   }
   activeRuns.add(caseId);
-  logBuffers.delete(caseId); // clear any previous run's buffer
+  logSeqs.delete(caseId); // reset sequence counter for this run
+  // Clear any previous run's logs in Firestore
+  try {
+    getFirestore().collection('cases').doc(caseId)
+      .update({ processingLogs: [] })
+      .catch(() => {});
+  } catch {}
 
   // Track which temp files still need cleanup (removed inline after each step3)
   const pendingCleanup = new Set(files.map(f => f.localFilePath));

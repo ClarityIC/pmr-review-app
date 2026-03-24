@@ -24,7 +24,7 @@ import {
   createCase, getCase, listCases, updateCase, deleteCase,
 } from './server/cases.js';
 import { signedReadUrl, getBucketUsageBytes, listObjects, BUCKET_AUTH, BUCKET_STAGING, BUCKET_OUTPUT } from './server/gcs.js';
-import { pipelineEmitter, getLogBuffer, runPipeline, FileInput } from './server/pipeline/orchestrator.js';
+import { runPipeline, FileInput } from './server/pipeline/orchestrator.js';
 import { runPreflight } from './server/preflight.js';
 import { DEFAULT_TABLE1_PROMPT, DEFAULT_TABLE2_PROMPT } from './server/pipeline/prompts.js';
 
@@ -175,6 +175,8 @@ app.post('/api/cases/:id/upload',
 );
 
 // ── SSE: pipeline log stream ─────────────────────────────────────────────────
+// Polls Firestore every 3 s so reconnecting clients on any Cloud Run instance
+// get the full replay and all subsequent entries.
 app.get('/api/cases/:id/logs', (req: Request, res: Response) => {
   const { id } = req.params;
   res.setHeader('Content-Type', 'text/event-stream');
@@ -182,19 +184,43 @@ app.get('/api/cases/:id/logs', (req: Request, res: Response) => {
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
-  const handler = (entry: any) => {
-    res.write(`data: ${JSON.stringify(entry)}\n\n`);
+  let closed = false;
+  let sentCount = 0;
+  req.on('close', () => { closed = true; });
+
+  // drain: extra poll cycles to run after status leaves 'processing'
+  // (catches final log entries whose Firestore writes are still in-flight)
+  const poll = async (drain = 0) => {
+    if (closed) return;
+    try {
+      const caseDoc = await getCase(id);
+      if (!caseDoc) { closed = true; return; }
+
+      const logs = (caseDoc.processingLogs || [])
+        .slice()
+        .sort((a: any, b: any) => (a.seq ?? 0) - (b.seq ?? 0));
+
+      for (let i = sentCount; i < logs.length; i++) {
+        // Strip the internal seq field before sending to the client
+        const { seq: _seq, ...entry } = logs[i] as any;
+        res.write(`data: ${JSON.stringify(entry)}\n\n`);
+      }
+      sentCount = logs.length;
+
+      if (!closed) {
+        if (caseDoc.status === 'processing') {
+          setTimeout(() => poll(0), 3000);
+        } else if (drain > 0) {
+          setTimeout(() => poll(drain - 1), 1500);
+        }
+        // else: pipeline finished + drain complete → stop polling
+      }
+    } catch {
+      if (!closed) setTimeout(() => poll(drain), 5000);
+    }
   };
 
-  // Attach handler first so no live events are missed during replay
-  pipelineEmitter.on(`log:${id}`, handler);
-
-  // Replay buffered entries so reconnecting clients see the full log history
-  for (const entry of getLogBuffer(id)) {
-    res.write(`data: ${JSON.stringify(entry)}\n\n`);
-  }
-
-  req.on('close', () => { pipelineEmitter.off(`log:${id}`, handler); });
+  poll(2); // start immediately; 2 drain cycles available after completion
 });
 
 // ── PDF signed URL ────────────────────────────────────────────────────────────

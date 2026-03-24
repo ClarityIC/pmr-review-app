@@ -33,6 +33,8 @@ export interface CaseRecord {
   // Prompt overrides (set via Admin panel)
   table1Prompt?: string;
   table2Prompt?: string;
+  // Per-run processing log (persisted for cross-instance SSE replay)
+  processingLogs?: Array<{ level: string; message: string; timestamp: string; seq: number }>;
 }
 
 const COLLECTION = 'cases';
