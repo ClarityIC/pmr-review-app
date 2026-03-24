@@ -34,7 +34,9 @@ const IS_PROD = process.env.NODE_ENV === 'production';
 const PORT = parseInt(getEnv('PORT') || '3000', 10);
 
 // ── Temp upload directory ──────────────────────────────────────────────────
-const UPLOAD_DIR = path.join(process.cwd(), 'uploads');
+// Use /tmp for uploads — the project directory is on Google Drive which can
+// evict temp files during long-running pipelines (7+ min for Document AI).
+const UPLOAD_DIR = path.join('/tmp', 'pmr-uploads');
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 // Cleanup stale temp files older than 2 hours on startup

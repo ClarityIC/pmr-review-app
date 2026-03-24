@@ -28,16 +28,36 @@ export async function step5(
     .replace('{{TABLE1_MARKDOWN}}', table1Markdown);
 
   const genai = getGenAI();
-  const response = await genai.models.generateContent({
-    model: modelName,
-    contents: [{ role: 'user', parts: [{ text: prompt }] }],
-    config: {
-      maxOutputTokens: 65536,
-      temperature: 0.1,
-    },
-  });
-
-  const markdownTable = response.text || '';
+  let markdownTable = '';
+  const MAX_GEMINI_ATTEMPTS = 3;
+  for (let attempt = 1; attempt <= MAX_GEMINI_ATTEMPTS; attempt++) {
+    try {
+      const response = await genai.models.generateContent({
+        model: modelName,
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        config: {
+          maxOutputTokens: 65536,
+          temperature: 0.1,
+          httpOptions: { timeout: 600_000 }, // 10 minutes
+        },
+      });
+      markdownTable = response.text || '';
+      break;
+    } catch (e: any) {
+      const isRetryable = e?.code === 'UND_ERR_HEADERS_TIMEOUT' ||
+        e?.cause?.code === 'UND_ERR_HEADERS_TIMEOUT' ||
+        (e?.message || '').includes('fetch failed') ||
+        (e?.message || '').includes('UNAVAILABLE') ||
+        (e?.message || '').includes('DEADLINE_EXCEEDED');
+      if (isRetryable && attempt < MAX_GEMINI_ATTEMPTS) {
+        const delay = attempt * 5_000;
+        log('warn', `[Step 5] Gemini attempt ${attempt}/${MAX_GEMINI_ATTEMPTS} failed: ${e.message} — retrying in ${delay / 1000}s`);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+      throw e;
+    }
+  }
   if (!markdownTable.includes('|')) {
     throw new Error('[Step 5] Gemini response does not contain a Markdown table. Check the prompt and model.');
   }

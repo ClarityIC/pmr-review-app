@@ -42,9 +42,11 @@ export async function step3(
       const layoutDoc = docaiResult.layoutDocs[i];
       const pageOffset = chunk.absolutePageOffset;
 
+      // Store only essential page metadata — full geometry would exceed BQ row limits
       const ocrPages = (ocrDoc?.pages || []).map((page: any, pi: number) => ({
-        ...page,
         pageNumber: pageOffset + (page.pageNumber ?? pi + 1),
+        dimension: page.dimension,
+        detectedLanguages: page.detectedLanguages,
       }));
 
       const layoutChunks = (layoutDoc?.chunkedDocument?.chunks || []).map((lc: any) => ({
@@ -108,9 +110,11 @@ export async function step3(
       const chunkIndex = chunk?.chunkIndex ?? 0;
       const pageOffset = chunk?.absolutePageOffset ?? 0;
 
+      // Store only essential page metadata — full geometry would exceed BQ row limits
       const ocrPages = (ocrDoc.pages || []).map((page: any, i: number) => ({
-        ...page,
         pageNumber: pageOffset + (page.pageNumber ?? i + 1),
+        dimension: page.dimension,
+        detectedLanguages: page.detectedLanguages,
       }));
 
       const layoutDoc = layoutByInput.get(sourceUri);

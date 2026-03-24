@@ -64,11 +64,14 @@ export interface Table0Row {
   created_at: string;      // ISO timestamp
 }
 
-/** Insert rows into Table 0. Uses streaming insert. */
+/** Insert rows into Table 0. Uses streaming insert, one row at a time to handle large payloads. */
 export async function insertRows(rows: Table0Row[]): Promise<void> {
   if (rows.length === 0) return;
   const bq = getBigQuery();
-  await bq.dataset(DATASET()).table(TABLE0()).insert(rows);
+  const table = bq.dataset(DATASET()).table(TABLE0());
+  for (const row of rows) {
+    await table.insert([row]);
+  }
   console.log(`[BQ] Inserted ${rows.length} rows for case ${rows[0].case_id}`);
 }
 

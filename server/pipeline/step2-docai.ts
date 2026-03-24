@@ -1,20 +1,23 @@
 /**
  * STEP 2: Bifurcated Dual-Processor Extraction (Document AI)
  *
- * Path 1 (≤150 total pages): Synchronous processDocument — retrieves each chunk from GCS
- *   staging, submits inline as rawDocument, max 5 concurrent per processor, exponential
- *   backoff on gRPC RESOURCE_EXHAUSTED / INTERNAL / UNAVAILABLE errors.
+ * Path 1 (≤150 total pages): Synchronous processDocument
+ *   - Uses rawDocument (inline bytes) — gcsDocument is NOT supported for sync
+ *   - OCR + Layout run in parallel (not serial)
+ *   - OCR: fixed concurrency (semaphore 5)
+ *   - Layout: adaptive concurrency — starts at 8, auto-tightens on quota hit
+ *   - Failed chunks return sentinels, then get resubmitted with fresh GCS bytes
  *
  * Path 2 (>150 total pages): Asynchronous batchProcess LRO — existing behavior,
  *   polling every exactly 10 seconds until SUCCEEDED.
  */
-import { getDocAI, getEnv, getGcpProjectId, getStorage } from '../config.js';
+import { getDocAI, getStorage, getEnv, getGcpProjectId } from '../config.js';
 import { ChunkRef, ProcessingPath } from './step1-chunk.js';
 import { BUCKET_OUTPUT, BUCKET_STAGING } from '../gcs.js';
 import { Log } from './orchestrator.js';
 
 const OCR_PROCESSOR_VERSION     = 'pretrained-ocr-v2.1-2024-08-07';
-const LAYOUT_PROCESSOR_VERSION  = 'pretrained-layout-parser-v1.6-pro-2025-12-01';
+const LAYOUT_PROCESSOR_VERSION  = 'pretrained-layout-parser-v1.6-2026-01-13';
 const LRO_POLL_INTERVAL_MS      = 10_000; // exactly 10 seconds — spec requirement
 
 export type DocAIResult =
@@ -25,6 +28,8 @@ export interface CancelOpts {
   isCancelled: () => boolean;
   onLROsStarted: (names: string[]) => void;
 }
+
+// ── Concurrency primitives ──────────────────────────────────────────────────
 
 class Semaphore {
   private available: number;
@@ -39,6 +44,120 @@ class Semaphore {
     if (next) { next(); } else { this.available++; }
   }
 }
+
+/**
+ * Adaptive concurrency limiter — starts optimistic and auto-tightens when
+ * RESOURCE_EXHAUSTED is detected, then holds at the discovered ceiling.
+ */
+class AdaptiveSemaphore {
+  private inFlight = 0;
+  private maxConcurrent: number;
+  private discovered = false;
+  private queue: Array<() => void> = [];
+
+  constructor(initialMax: number) { this.maxConcurrent = initialMax; }
+
+  async acquire(): Promise<void> {
+    if (this.inFlight < this.maxConcurrent) { this.inFlight++; return; }
+    return new Promise<void>(resolve => this.queue.push(resolve));
+  }
+
+  release(): void {
+    this.inFlight--;
+    const next = this.queue.shift();
+    if (next) { this.inFlight++; next(); }
+  }
+
+  /** Called on RESOURCE_EXHAUSTED — tightens concurrency to what was working. */
+  onQuotaHit(): void {
+    if (!this.discovered) {
+      this.maxConcurrent = Math.max(1, this.inFlight - 1);
+      this.discovered = true;
+    }
+  }
+
+  get currentMax(): number { return this.maxConcurrent; }
+  get isLimitDiscovered(): boolean { return this.discovered; }
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+/** Download a chunk's PDF bytes from the GCS staging bucket. */
+async function downloadChunkBytes(chunk: ChunkRef): Promise<Buffer> {
+  const gcsPath = chunk.gcsUri.replace(`gs://${BUCKET_STAGING()}/`, '');
+  const [content] = await getStorage().bucket(BUCKET_STAGING()).file(gcsPath).download();
+  return content;
+}
+
+type ChunkResult =
+  | { ok: true; doc: any }
+  | { ok: false; chunkIndex: number; error: string };
+
+/** Process one chunk with up to MAX_ATTEMPTS retries. Returns a sentinel on failure instead of throwing. */
+async function processWithRetry(
+  pdfBytes: Buffer,
+  chunk: ChunkRef,
+  processorName: string,
+  label: string,
+  sem: Semaphore | AdaptiveSemaphore,
+  processOptions: Record<string, any> | undefined,
+  cancelOpts: CancelOpts,
+  log: Log,
+): Promise<ChunkResult> {
+  const MAX_ATTEMPTS = 5;
+  await sem.acquire();
+  try {
+    let delay = 2_000;
+    const startMs = Date.now();
+
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      if (cancelOpts.isCancelled()) throw new Error('Processing was cancelled.');
+      try {
+        const [response] = await getDocAI().processDocument({
+          name: processorName,
+          rawDocument: { content: pdfBytes, mimeType: 'application/pdf' },
+          skipHumanReview: true,
+          ...(processOptions ? { processOptions } : {}),
+        });
+        if (!response.document) throw new Error('No document returned');
+        const elapsed = ((Date.now() - startMs) / 1000).toFixed(1);
+        log('info', `[Step 2] ${label} chunk ${chunk.chunkIndex} complete (${elapsed}s)`);
+        return { ok: true, doc: response.document };
+      } catch (e: any) {
+        const code = e?.code;
+        const isQuotaError =
+          code === 8 ||
+          (e?.message || '').includes('Quota') ||
+          (e?.message || '').includes('RESOURCE_EXHAUSTED');
+        const isRetryable =
+          isQuotaError || code === 4 || code === 13 || code === 14;
+
+        // Notify adaptive semaphore of quota hit so it tightens concurrency
+        if (isQuotaError && sem instanceof AdaptiveSemaphore) {
+          sem.onQuotaHit();
+          log('warn', `[Step 2] ${label} quota hit on chunk ${chunk.chunkIndex} — concurrency reduced to ${sem.currentMax}`);
+        }
+
+        if (isRetryable && attempt < MAX_ATTEMPTS) {
+          log('warn', `[Step 2] ${label} chunk ${chunk.chunkIndex} attempt ${attempt}/${MAX_ATTEMPTS} failed (code=${code}) — retry in ${delay / 1000}s`);
+          // Release slot during backoff so other chunks can proceed
+          sem.release();
+          await sleep(delay);
+          delay = Math.min(delay * 2, 32_000);
+          await sem.acquire(); // re-acquire (respects tightened limit)
+        } else {
+          log('warn', `[Step 2] ${label} chunk ${chunk.chunkIndex} failed after ${attempt} attempt(s): ${e.message}`);
+          return { ok: false, chunkIndex: chunk.chunkIndex, error: e.message };
+        }
+      }
+    }
+    return { ok: false, chunkIndex: chunk.chunkIndex, error: 'Max attempts exhausted' };
+  } finally {
+    sem.release();
+  }
+}
+
+// ── Main step2 function ─────────────────────────────────────────────────────
 
 export async function step2(
   chunks: ChunkRef[],
@@ -63,64 +182,67 @@ export async function step2(
 
   // ── PATH 1: Synchronous processing ────────────────────────────────────────
   if (processingPath === 'path1-sync') {
-    log('info', `[Step 2] Path 1: synchronous processing of ${chunks.length} chunk(s) (max 5 concurrent per processor)`);
+    log('info', `[Step 2] Path 1: synchronous processing of ${chunks.length} chunk(s)`);
     cancelOpts.onLROsStarted([]); // no LROs for sync path
 
-    // Retrieve chunk bytes from GCS staging on every attempt (including retries per spec)
-    const downloadChunkBytes = async (chunk: ChunkRef): Promise<Buffer> => {
-      const gcsPath = chunk.gcsUri.replace(`gs://${BUCKET_STAGING()}/`, '');
-      const [content] = await getStorage().bucket(BUCKET_STAGING()).file(gcsPath).download();
-      return content;
+    // Pre-download all chunk bytes from GCS in parallel
+    log('info', '[Step 2] Downloading chunk bytes from staging bucket');
+    const chunkBytes = await Promise.all(chunks.map(c => downloadChunkBytes(c)));
+    log('info', `[Step 2] Downloaded ${chunkBytes.length} chunk(s)`);
+
+    const layoutOptions = {
+      layoutConfig: {
+        chunkingConfig: {
+          chunkSize: 500,
+          includeAncestorHeadings: true,
+        },
+      },
     };
 
-    const processChunk = async (
-      chunk: ChunkRef,
-      processorName: string,
-      label: string,
-      sem: Semaphore,
-    ): Promise<any> => {
-      if (cancelOpts.isCancelled()) throw new Error('Processing was cancelled.');
-      await sem.acquire();
-      try {
-        let delay = 2_000;
-        while (true) {
-          if (cancelOpts.isCancelled()) throw new Error('Processing was cancelled.');
-          try {
-            const pdfBytes = await downloadChunkBytes(chunk);
-            const [response] = await getDocAI().processDocument({
-              name: processorName,
-              rawDocument: { content: pdfBytes, mimeType: 'application/pdf' },
-            });
-            if (!response.document) throw new Error(`[Step 2] ${label} processDocument returned no document for chunk ${chunk.chunkIndex}`);
-            log('info', `[Step 2] ${label} chunk ${chunk.chunkIndex} complete (sync)`);
-            return response.document;
-          } catch (e: any) {
-            // gRPC codes: 8=RESOURCE_EXHAUSTED (quota), 13=INTERNAL (500), 14=UNAVAILABLE (503)
-            const isRetryable =
-              e?.code === 8 || e?.code === 13 || e?.code === 14 ||
-              (e?.message || '').includes('Quota') ||
-              (e?.message || '').includes('RESOURCE_EXHAUSTED');
-            if (isRetryable) {
-              log('warn', `[Step 2] ${label} transient error on chunk ${chunk.chunkIndex} — retrying in ${delay / 1000}s`);
-              await sleep(delay);
-              delay = Math.min(delay * 2, 60_000);
-            } else {
-              throw e;
-            }
-          }
-        }
-      } finally {
-        sem.release();
-      }
-    };
+    const ocrSem    = new Semaphore(5);           // OCR: fixed, fast processor
+    const layoutSem = new AdaptiveSemaphore(8);   // Layout: starts aggressive, auto-tightens on quota hit
 
-    const ocrSem    = new Semaphore(5);
-    const layoutSem = new Semaphore(5);
+    // ── OCR + Layout in parallel ────────────────────────────────────────────
+    log('info', `[Step 2] Processing ${chunks.length} chunk(s) through OCR + Layout in parallel`);
 
-    const [ocrDocs, layoutDocs] = await Promise.all([
-      Promise.all(chunks.map(c => processChunk(c, ocrProcessorName,    'OCR',    ocrSem))),
-      Promise.all(chunks.map(c => processChunk(c, layoutProcessorName, 'Layout', layoutSem))),
+    const [ocrResults, layoutResults] = await Promise.all([
+      Promise.all(chunks.map((chunk, i) =>
+        processWithRetry(chunkBytes[i], chunk, ocrProcessorName, 'OCR', ocrSem, undefined, cancelOpts, log),
+      )),
+      Promise.all(chunks.map((chunk, i) =>
+        processWithRetry(chunkBytes[i], chunk, layoutProcessorName, 'Layout', layoutSem, layoutOptions, cancelOpts, log),
+      )),
     ]);
+
+    if (layoutSem.isLimitDiscovered) {
+      log('info', `[Step 2] Layout quota ceiling discovered: ${layoutSem.currentMax} concurrent`);
+    }
+
+    // ── Resubmission pass: retry any failed chunks with fresh GCS bytes ─────
+    const failedOcr    = ocrResults.filter((r): r is { ok: false; chunkIndex: number; error: string } => !r.ok);
+    const failedLayout = layoutResults.filter((r): r is { ok: false; chunkIndex: number; error: string } => !r.ok);
+
+    if (failedOcr.length > 0 || failedLayout.length > 0) {
+      log('warn', `[Step 2] Resubmitting failed chunks — OCR: ${failedOcr.length}, Layout: ${failedLayout.length}`);
+
+      for (const f of failedOcr) {
+        const freshBytes = await downloadChunkBytes(chunks[f.chunkIndex]);
+        const result = await processWithRetry(freshBytes, chunks[f.chunkIndex], ocrProcessorName, 'OCR (retry)', ocrSem, undefined, cancelOpts, log);
+        if (!result.ok) throw new Error(`[Step 2] OCR chunk ${f.chunkIndex} failed permanently: ${f.error}`);
+        ocrResults[f.chunkIndex] = result;
+      }
+
+      for (const f of failedLayout) {
+        const freshBytes = await downloadChunkBytes(chunks[f.chunkIndex]);
+        const result = await processWithRetry(freshBytes, chunks[f.chunkIndex], layoutProcessorName, 'Layout (retry)', layoutSem, layoutOptions, cancelOpts, log);
+        if (!result.ok) throw new Error(`[Step 2] Layout chunk ${f.chunkIndex} failed permanently: ${f.error}`);
+        layoutResults[f.chunkIndex] = result;
+      }
+    }
+
+    // Extract documents (all results guaranteed ok at this point)
+    const ocrDocs    = ocrResults.map(r => (r as { ok: true; doc: any }).doc);
+    const layoutDocs = layoutResults.map(r => (r as { ok: true; doc: any }).doc);
 
     log('success', '[Step 2] Path 1 synchronous processing complete');
     return { path: 'path1-sync', ocrDocs, layoutDocs };
@@ -162,6 +284,14 @@ export async function step2(
       gcsOutputConfig: { gcsUri: `gs://${outputBucket}/${layoutOutputPrefix}` },
     },
     skipHumanReview: true,
+    processOptions: {
+      layoutConfig: {
+        chunkingConfig: {
+          chunkSize: 500,
+          includeAncestorHeadings: true,
+        },
+      },
+    },
   });
 
   log('info', `[Step 2] OCR LRO started: ${ocrOp.name}`);

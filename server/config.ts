@@ -103,7 +103,9 @@ export function getGenAI(): GoogleGenAI {
   if (!_genai) {
     const creds = getGcpCredentials();
     const projectId = getGcpProjectId();
-    const location = getEnv('VERTEX_LOCATION') || 'us-central1';
+    // Gemini 3.x preview models are only available on the global endpoint.
+    // Use VERTEX_GEMINI_LOCATION to override (defaults to 'global').
+    const location = getEnv('VERTEX_GEMINI_LOCATION') || 'global';
     if (!creds) throw new Error('GCP_SA_KEY is required for Vertex AI Gemini access.');
     _genai = new GoogleGenAI({
       vertexai: true,

@@ -14,7 +14,7 @@ import { uploadFile, uploadBuffer, BUCKET_AUTH, BUCKET_STAGING } from '../gcs.js
 import { Log } from './orchestrator.js';
 
 export type ProcessingPath = 'path1-sync' | 'path2-async';
-export const CHUNK_SIZE_SYNC  = 15;   // Path 1: ≤15 pages per chunk (sync processDocument limit)
+export const CHUNK_SIZE_SYNC  = 5;    // Path 1: ≤5 pages per chunk — Layout Parser v1.6 times out at 120s on dense scanned docs with larger chunks
 export const CHUNK_SIZE_ASYNC = 500;  // Path 2: ≤500 pages per chunk (async batchProcess limit)
 
 export interface ChunkRef {
