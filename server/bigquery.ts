@@ -105,3 +105,25 @@ export async function deleteCaseRows(caseId: string): Promise<void> {
   await bq.query({ query, params: { caseId } });
   console.log(`[BQ] Deleted rows for case ${caseId}`);
 }
+
+/**
+ * Delete rows whose case_id is NOT in the provided list of known IDs.
+ * Used during orphan cleanup after cases have been deleted from Firestore.
+ * UUIDs contain only [0-9a-f-] so safe to inline into SQL.
+ */
+export async function deleteOrphanRows(knownCaseIds: string[]): Promise<void> {
+  if (knownCaseIds.length === 0) return; // safety: don't wipe table if no known cases
+  const bq = getBigQuery();
+  const idList = knownCaseIds.map(id => `'${id}'`).join(', ');
+  const query = `
+    DELETE FROM \`${bq.projectId}.${DATASET()}.${TABLE0()}\`
+    WHERE case_id NOT IN (${idList})
+  `;
+  try {
+    await bq.query(query);
+    console.log(`[BQ] Orphan row cleanup complete (${knownCaseIds.length} known cases)`);
+  } catch (e: any) {
+    // Table may not exist yet — not an error
+    if (!e.message?.includes('Not found')) throw e;
+  }
+}

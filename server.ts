@@ -23,7 +23,8 @@ import { getEnv, getDocAI, getGcpProjectId } from './server/config.js';
 import {
   createCase, getCase, listCases, updateCase, deleteCase,
 } from './server/cases.js';
-import { signedReadUrl, getBucketUsageBytes, listObjects, BUCKET_AUTH, BUCKET_STAGING, BUCKET_OUTPUT } from './server/gcs.js';
+import { signedReadUrl, getBucketUsageBytes, listObjects, deletePrefix, BUCKET_AUTH, BUCKET_STAGING, BUCKET_OUTPUT } from './server/gcs.js';
+import { deleteCaseRows, deleteOrphanRows } from './server/bigquery.js';
 import { runPipeline, cancelPipeline, FileInput } from './server/pipeline/orchestrator.js';
 import { runPreflight } from './server/preflight.js';
 import { DEFAULT_TABLE1_PROMPT, DEFAULT_TABLE2_PROMPT } from './server/pipeline/prompts.js';
@@ -140,8 +141,14 @@ app.get('/api/cases/:id', async (req: Request, res: Response) => {
 
 app.delete('/api/cases/:id', async (req: Request, res: Response) => {
   try {
-    await cancelPipeline(req.params.id); // cancel any active DocAI LROs first
-    await deleteCase(req.params.id);
+    const { id } = req.params;
+    await cancelPipeline(id);              // cancel any active DocAI LROs first
+    await deleteCase(id);                  // remove Firestore document
+    // Purge GCS + BigQuery in the background (non-blocking)
+    Promise.all([
+      deletePrefix(BUCKET_AUTH(), `cases/${id}/`),
+      deleteCaseRows(id),
+    ]).catch(e => console.error(`[delete] Purge error for ${id}:`, e));
     res.json({ ok: true });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
@@ -309,6 +316,34 @@ app.get('/api/admin/storage', async (_req: Request, res: Response) => {
       ],
       totalBytes: authBytes + stagingBytes + outputBytes,
     });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Admin: purge orphaned GCS + BigQuery data for deleted cases ───────────────
+app.post('/api/admin/purge-orphans', async (_req: Request, res: Response) => {
+  try {
+    // All currently known case IDs from Firestore
+    const cases = await listCases();
+    const knownIds = new Set(cases.map(c => c.id));
+
+    // GCS: list all objects under cases/ prefix, extract unique caseIds
+    const objects = await listObjects(BUCKET_AUTH(), 'cases/');
+    const gcsCaseIds = new Set(
+      objects.map(o => o.name.split('/')[1]).filter(Boolean),
+    );
+
+    // Delete GCS prefixes for cases no longer in Firestore
+    const orphanIds = [...gcsCaseIds].filter(id => !knownIds.has(id));
+    await Promise.all(
+      orphanIds.map(id => deletePrefix(BUCKET_AUTH(), `cases/${id}/`)),
+    );
+
+    // BigQuery: delete rows whose case_id is not in the known set
+    await deleteOrphanRows([...knownIds]);
+
+    res.json({ purgedCases: orphanIds.length, orphanIds });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }

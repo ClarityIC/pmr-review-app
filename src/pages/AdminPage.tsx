@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   ChevronLeft, RefreshCw, Loader2, CheckCircle, XCircle, AlertTriangle,
   Database, HardDrive, ChevronDown, Download, Save, Clock,
-  ScanSearch, StopCircle, CheckCircle2, AlertCircle,
+  ScanSearch, StopCircle, CheckCircle2, AlertCircle, Trash2,
 } from 'lucide-react';
 import NavBar from '../components/NavBar.js';
 import { User } from '../main.js';
@@ -145,6 +145,8 @@ function WorkflowTab() {
 function StorageTab({ addError }: { addError: (m: string) => void }) {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [purging, setPurging] = useState(false);
+  const [purgeResult, setPurgeResult] = useState<{ purgedCases: number; orphanIds: string[] } | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -154,6 +156,20 @@ function StorageTab({ addError }: { addError: (m: string) => void }) {
       setData(await res.json());
     } catch (e: any) { addError(`Storage monitor error: ${e.message}`); }
     finally { setLoading(false); }
+  };
+
+  const purgeOrphans = async () => {
+    if (!window.confirm('Scan for and permanently delete GCS files and BigQuery data from cases that have been deleted? This cannot be undone.')) return;
+    setPurging(true);
+    setPurgeResult(null);
+    try {
+      const res = await fetch('/api/admin/purge-orphans', { method: 'POST' });
+      if (!res.ok) throw new Error('Purge failed');
+      const result = await res.json();
+      setPurgeResult(result);
+      await load(); // refresh storage usage
+    } catch (e: any) { addError(`Purge error: ${e.message}`); }
+    finally { setPurging(false); }
   };
 
   useEffect(() => { load(); }, []);
@@ -208,6 +224,41 @@ function StorageTab({ addError }: { addError: (m: string) => void }) {
           ))}
         </>
       )}
+
+      {/* Orphan cleanup */}
+      <div className="border-t border-slate-200 dark:border-slate-700 pt-4 space-y-3">
+        <div>
+          <h3 className="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-1">Purge Deleted Case Data</h3>
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            Scans Cloud Storage and BigQuery for files belonging to cases that have been deleted from Firestore, then permanently removes them.
+          </p>
+        </div>
+
+        {purgeResult && (
+          <div className={cn(
+            'rounded-xl px-4 py-3 flex items-start gap-3',
+            purgeResult.purgedCases > 0
+              ? 'bg-emerald-50 border border-emerald-200 dark:bg-emerald-950/20 dark:border-emerald-800'
+              : 'bg-slate-50 border border-slate-200 dark:bg-slate-800/50 dark:border-slate-700',
+          )}>
+            <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
+            <p className="text-sm text-emerald-800 dark:text-emerald-300">
+              {purgeResult.purgedCases > 0
+                ? `${purgeResult.purgedCases} deleted case${purgeResult.purgedCases !== 1 ? 's' : ''} purged from Cloud Storage and BigQuery.`
+                : 'No orphaned data found — storage is clean.'}
+            </p>
+          </div>
+        )}
+
+        <button
+          onClick={purgeOrphans}
+          disabled={purging || loading}
+          className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-rose-600 dark:text-rose-400 border border-rose-300 dark:border-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/20 rounded-xl transition-colors disabled:opacity-50"
+        >
+          {purging ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+          {purging ? 'Purging…' : 'Purge Deleted Case Data'}
+        </button>
+      </div>
     </div>
   );
 }
