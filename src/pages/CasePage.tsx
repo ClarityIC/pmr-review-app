@@ -74,7 +74,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
       if (!res.ok) { navigate('/cases'); return; }
       const data = await res.json();
       setCaseData(data.case);
-    } catch { addError('Failed to load case.'); }
+    } catch (e) { console.error('[case/load]', e); addError("Couldn't load this case — please refresh the page."); }
     finally { setLoading(false); }
   }, [id]);
 
@@ -133,15 +133,22 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
       files.forEach(f => formData.append('files', f));
       const res = await fetch(`/api/cases/${id}/upload`, { method: 'POST', body: formData });
       if (!res.ok) {
-        let msg = 'Upload failed';
-        try { const d = await res.json(); msg = d.error || msg; } catch {}
-        throw new Error(msg);
+        let serverMsg = '';
+        try { const d = await res.json(); serverMsg = d.error || ''; } catch {}
+        console.error(`[upload] Server error ${res.status}:`, serverMsg);
+        if (res.status === 404) throw new Error('not_found');
+        throw new Error('failed');
       }
 
       // Update local case status immediately so SSE sub kicks in
       setCaseData((prev: any) => prev ? { ...prev, status: 'processing' } : prev);
     } catch (e: any) {
-      addError(`Upload failed: ${e.message}`);
+      console.error('[upload]', e);
+      if (e.message === 'not_found') {
+        addError("This case no longer exists — go back and refresh your cases list.");
+      } else {
+        addError("The files couldn't be uploaded. Please check your connection and try again.");
+      }
     } finally {
       setUploading(false);
     }
@@ -190,7 +197,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
       if (!res.ok) throw new Error('Could not get PDF URL');
       const { url } = await res.json();
       setPdfUrl(url);
-    } catch (e: any) { addError(`Cannot open PDF: ${e.message}`); }
+    } catch (e: any) { console.error('[pdf/open]', e); addError("Couldn't open this PDF. Please try again."); }
     finally { setPdfLoading(false); }
   }, [id]);
 

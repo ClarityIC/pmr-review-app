@@ -152,9 +152,9 @@ function StorageTab({ addError }: { addError: (m: string) => void }) {
     setLoading(true);
     try {
       const res = await fetch('/api/admin/storage');
-      if (!res.ok) throw new Error('Failed');
+      if (!res.ok) throw new Error('server_error');
       setData(await res.json());
-    } catch (e: any) { addError(`Storage monitor error: ${e.message}`); }
+    } catch (e: any) { console.error('[admin/storage]', e); addError("Couldn't load storage data — please refresh."); }
     finally { setLoading(false); }
   };
 
@@ -164,11 +164,11 @@ function StorageTab({ addError }: { addError: (m: string) => void }) {
     setPurgeResult(null);
     try {
       const res = await fetch('/api/admin/purge-orphans', { method: 'POST' });
-      if (!res.ok) throw new Error('Purge failed');
+      if (!res.ok) throw new Error('server_error');
       const result = await res.json();
       setPurgeResult(result);
       await load(); // refresh storage usage
-    } catch (e: any) { addError(`Purge error: ${e.message}`); }
+    } catch (e: any) { console.error('[admin/purge]', e); addError("The storage purge couldn't be completed — please try again."); }
     finally { setPurging(false); }
   };
 
@@ -284,7 +284,7 @@ function PromptsTab({ addError }: { addError: (m: string) => void }) {
       setPromptText(data.current || '');
       setSavedPrompt(data.current || '');
       setHistory(data.history || []);
-    } catch (e: any) { addError(`Failed to load prompt: ${e.message}`); }
+    } catch (e: any) { console.error('[admin/prompts/load]', e); addError("Couldn't load the prompt — please refresh."); }
     finally { setLoading(false); }
   }, [activeTable]);
 
@@ -299,10 +299,10 @@ function PromptsTab({ addError }: { addError: (m: string) => void }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt: promptText.trim() }),
       });
-      if (!res.ok) throw new Error('Save failed');
+      if (!res.ok) throw new Error('server_error');
       setSavedPrompt(promptText.trim());
       await load(); // refresh history
-    } catch (e: any) { addError(`Save failed: ${e.message}`); }
+    } catch (e: any) { console.error('[admin/prompts/save]', e); addError("The prompt couldn't be saved — please try again."); }
     finally { setSaving(false); }
   };
 
@@ -427,7 +427,8 @@ function OcrRequestsTab({ addError }: { addError: (m: string) => void }) {
       if (!res.ok) throw new Error(body.error || `Server error ${res.status}`);
       setStatus(body);
     } catch (e: any) {
-      addError(`Failed to check OCR status: ${e.message}`);
+      console.error('[admin/docai/ops]', e);
+      addError("Couldn't retrieve Document AI request status — please try again.");
     } finally {
       setChecking(false);
     }
@@ -443,7 +444,8 @@ function OcrRequestsTab({ addError }: { addError: (m: string) => void }) {
       setCancelResult(result);
       await checkStatus(); // refresh status after cancel
     } catch (e: any) {
-      addError(`Failed to cancel operations: ${e.message}`);
+      console.error('[admin/docai/cancel]', e);
+      addError("Couldn't cancel Document AI requests — please try again.");
     } finally {
       setCancelling(false);
     }
@@ -626,9 +628,9 @@ function PreflightTab({ addError }: { addError: (m: string) => void }) {
     setRunningPreflight(true);
     try {
       const res = await fetch('/api/admin/preflight');
-      if (!res.ok) throw new Error('Preflight failed');
+      if (!res.ok) throw new Error('server_error');
       setPreflight(await res.json());
-    } catch (e: any) { addError(`Preflight error: ${e.message}`); }
+    } catch (e: any) { console.error('[admin/preflight]', e); addError("The pre-flight check couldn't run — please try again."); }
     finally { setRunningPreflight(false); }
   };
 

@@ -38,7 +38,7 @@ authRouter.get('/me', (req: Request, res: Response) => {
 authRouter.post('/google-redirect', async (req: Request, res: Response) => {
   const { credential } = req.body;
   if (!credential) {
-    return res.redirect('/?error=Missing+credential');
+    return res.redirect('/?error=Sign-in+failed.+Please+try+again.');
   }
 
   try {

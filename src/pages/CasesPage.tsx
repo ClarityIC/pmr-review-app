@@ -40,7 +40,7 @@ export default function CasesPage({ user, onLogout, darkMode, onToggleDark, addE
       if (res.status === 401) { onLogout(); return; }
       const data = await res.json();
       setCases(data.cases || []);
-    } catch { addError('Failed to load cases.'); }
+    } catch (e) { console.error('[cases/load]', e); addError("Couldn't load your cases — please refresh the page."); }
     finally { setLoading(false); }
   }, [search, sortBy, sortDir]);
 
@@ -66,10 +66,10 @@ export default function CasesPage({ user, onLogout, darkMode, onToggleDark, addE
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ patientName: newName.trim(), dateOfInjury: newDOI.trim() }),
       });
-      if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Failed'); }
+      if (!res.ok) { const d = await res.json().catch(() => ({})); console.error('[cases/create]', d.error); throw new Error('failed'); }
       const data = await res.json();
       navigate(`/cases/${data.case.id}`);
-    } catch (e: any) { addError(e.message); }
+    } catch (e: any) { addError("Couldn't create the case — please try again."); }
     finally { setCreating(false); }
   };
 
