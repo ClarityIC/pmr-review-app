@@ -21,11 +21,17 @@ export interface DocAIResult {
   layoutOutputPrefix: string;  // GCS prefix where Layout Parser JSON outputs landed
 }
 
+export interface CancelOpts {
+  isCancelled: () => boolean;
+  onLROsStarted: (names: string[]) => void;
+}
+
 export async function step2(
   chunks: ChunkRef[],
   caseId: string,
   fileId: string,
   log: Log,
+  cancelOpts: CancelOpts,
 ): Promise<DocAIResult> {
   log('info', '[Step 2] Starting dual Document AI batch processing');
 
@@ -79,20 +85,25 @@ export async function step2(
   log('info', `[Step 2] OCR LRO started: ${ocrOp.name}`);
   log('info', `[Step 2] Layout LRO started: ${layoutOp.name}`);
 
+  // Register active LROs so the orchestrator can cancel them if needed
+  cancelOpts.onLROsStarted([ocrOp.name!, layoutOp.name!]);
+  if (cancelOpts.isCancelled()) throw new Error('Processing was cancelled.');
+
   // ── Poll both LROs at exactly 10-second intervals ─────────────────────────
   const [ocrDone, layoutDone] = await Promise.all([
-    pollLRO(docai, ocrOp.name!, 'OCR', log),
-    pollLRO(docai, layoutOp.name!, 'Layout', log),
+    pollLRO(docai, ocrOp.name!, 'OCR', log, cancelOpts.isCancelled),
+    pollLRO(docai, layoutOp.name!, 'Layout', log, cancelOpts.isCancelled),
   ]);
 
   log('success', '[Step 2] Both Document AI processors completed successfully');
   return { ocrOutputPrefix, layoutOutputPrefix };
 }
 
-async function pollLRO(docai: any, operationName: string, label: string, log: Log): Promise<void> {
+async function pollLRO(docai: any, operationName: string, label: string, log: Log, isCancelled: () => boolean): Promise<void> {
   let attempts = 0;
   while (true) {
     await sleep(LRO_POLL_INTERVAL_MS);
+    if (isCancelled()) throw new Error('Processing was cancelled.');
     attempts++;
 
     const [op] = await docai.operationsClient.getOperation({ name: operationName });

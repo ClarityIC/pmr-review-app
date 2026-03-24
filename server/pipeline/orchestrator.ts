@@ -16,7 +16,7 @@ import { step3 } from './step3-reassemble.js';
 import { step4 } from './step4-table1.js';
 import { step5 } from './step5-table2.js';
 import { updateCase, addFileToCase, getCase } from '../cases.js';
-import { getFirestore } from '../config.js';
+import { getFirestore, getDocAI } from '../config.js';
 import { BUCKET_AUTH } from '../gcs.js';
 import { ensureTable0Exists, deleteCaseRows } from '../bigquery.js';
 
@@ -30,8 +30,33 @@ pipelineEmitter.setMaxListeners(100);
 // Track active runs for deduplication — keyed by caseId
 const activeRuns = new Set<string>();
 
+// Track active DocAI LRO operation names — keyed by caseId
+const activeLRONames = new Map<string, string[]>();
+
+// Track runs that have been cancelled (so pipeline steps can bail out)
+const cancelledRuns = new Set<string>();
+
 // Per-run sequence counter — makes each Firestore log entry unique for arrayUnion
 const logSeqs = new Map<string, number>();
+
+/**
+ * Cancel any active DocAI LROs for a case and mark the run as cancelled.
+ * Safe to call even if no pipeline is running.
+ */
+export async function cancelPipeline(caseId: string): Promise<void> {
+  cancelledRuns.add(caseId);
+  const lros = activeLRONames.get(caseId) || [];
+  activeLRONames.delete(caseId);
+  if (lros.length > 0) {
+    const docai = getDocAI();
+    await Promise.all(
+      lros.map(name =>
+        (docai.operationsClient as any).cancelOperation({ name }).catch(() => {}),
+      ),
+    );
+    console.log(`[pipeline] Cancelled ${lros.length} DocAI LRO(s) for case ${caseId}`);
+  }
+}
 
 export function emitLog(caseId: string, level: LogLevel, message: string) {
   const seq = (logSeqs.get(caseId) ?? 0) + 1;
@@ -75,6 +100,7 @@ export async function runPipeline(opts: RunOptions): Promise<void> {
     return;
   }
   activeRuns.add(caseId);
+  cancelledRuns.delete(caseId); // clear any stale cancel flag from a previous run
   logSeqs.delete(caseId); // reset sequence counter for this run
   // Clear any previous run's logs in Firestore
   try {
@@ -87,6 +113,7 @@ export async function runPipeline(opts: RunOptions): Promise<void> {
   const pendingCleanup = new Set(files.map(f => f.localFilePath));
 
   const log: Log = (level, message) => emitLog(caseId, level, message);
+  const isCancelled = () => cancelledRuns.has(caseId);
 
   try {
     await updateCase(caseId, { status: 'processing' });
@@ -107,6 +134,7 @@ export async function runPipeline(opts: RunOptions): Promise<void> {
       log('info', `Processing file ${i + 1}/${files.length}: ${fileName}`);
 
       // Step 1: Upload original + chunk
+      if (isCancelled()) throw new Error('Processing was cancelled.');
       const step1Result = await step1(localFilePath, caseId, fileId, fileName, log);
 
       // Register the file in Firestore now that it's safely in GCS
@@ -120,9 +148,14 @@ export async function runPipeline(opts: RunOptions): Promise<void> {
       });
 
       // Step 2: Dual Document AI batch processing
-      const step2Result = await step2(step1Result.chunks, caseId, fileId, log);
+      if (isCancelled()) throw new Error('Processing was cancelled.');
+      const step2Result = await step2(step1Result.chunks, caseId, fileId, log, {
+        isCancelled,
+        onLROsStarted: (names) => activeLRONames.set(caseId, names),
+      });
 
       // Step 3: Reassemble + BigQuery ingest + staging scrub
+      if (isCancelled()) throw new Error('Processing was cancelled.');
       await step3(step1Result.chunks, step2Result, caseId, fileId, fileName, log);
 
       // Clean up local temp file immediately — GCS is now the only copy
@@ -131,6 +164,7 @@ export async function runPipeline(opts: RunOptions): Promise<void> {
     }
 
     // ── Step 4: Table 1 generation (whole case) ───────────────────────────────
+    if (isCancelled()) throw new Error('Processing was cancelled.');
     const caseData = await getCase(caseId);
     const { rows: table1Rows, markdownTable: table1Md } = await step4(
       caseId,
@@ -141,6 +175,7 @@ export async function runPipeline(opts: RunOptions): Promise<void> {
     await updateCase(caseId, { table1: table1Rows });
 
     // ── Step 5: Table 2 generation (whole case) ───────────────────────────────
+    if (isCancelled()) throw new Error('Processing was cancelled.');
     const { rows: table2Rows } = await step5(
       caseId,
       table1Md,
@@ -165,6 +200,8 @@ export async function runPipeline(opts: RunOptions): Promise<void> {
     await updateCase(caseId, { status: 'error', errorMessage: msg }).catch(() => {});
   } finally {
     activeRuns.delete(caseId);
+    cancelledRuns.delete(caseId);
+    activeLRONames.delete(caseId);
     // Clean up any temp files that weren't removed inline (e.g. pipeline failed before step 3)
     for (const p of pendingCleanup) {
       try { unlinkSync(p); } catch {}

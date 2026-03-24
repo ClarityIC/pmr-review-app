@@ -24,7 +24,7 @@ import {
   createCase, getCase, listCases, updateCase, deleteCase,
 } from './server/cases.js';
 import { signedReadUrl, getBucketUsageBytes, listObjects, BUCKET_AUTH, BUCKET_STAGING, BUCKET_OUTPUT } from './server/gcs.js';
-import { runPipeline, FileInput } from './server/pipeline/orchestrator.js';
+import { runPipeline, cancelPipeline, FileInput } from './server/pipeline/orchestrator.js';
 import { runPreflight } from './server/preflight.js';
 import { DEFAULT_TABLE1_PROMPT, DEFAULT_TABLE2_PROMPT } from './server/pipeline/prompts.js';
 
@@ -140,6 +140,7 @@ app.get('/api/cases/:id', async (req: Request, res: Response) => {
 
 app.delete('/api/cases/:id', async (req: Request, res: Response) => {
   try {
+    await cancelPipeline(req.params.id); // cancel any active DocAI LROs first
     await deleteCase(req.params.id);
     res.json({ ok: true });
   } catch (e: any) {
