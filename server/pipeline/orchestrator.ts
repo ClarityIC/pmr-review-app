@@ -33,6 +33,11 @@ const activeRuns = new Set<string>();
 // Track active DocAI LRO operation names — keyed by caseId
 const activeLRONames = new Map<string, string[]>();
 
+/** Expose active LRO names for the admin operations monitor. */
+export function getActiveLRONames(): ReadonlyMap<string, string[]> {
+  return activeLRONames;
+}
+
 // Track runs that have been cancelled (so pipeline steps can bail out)
 const cancelledRuns = new Set<string>();
 

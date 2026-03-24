@@ -423,8 +423,9 @@ function OcrRequestsTab({ addError }: { addError: (m: string) => void }) {
     setCancelResult(null);
     try {
       const res = await fetch('/api/admin/docai/operations');
-      if (!res.ok) throw new Error('Request failed');
-      setStatus(await res.json());
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || `Server error ${res.status}`);
+      setStatus(body);
     } catch (e: any) {
       addError(`Failed to check OCR status: ${e.message}`);
     } finally {
@@ -437,8 +438,8 @@ function OcrRequestsTab({ addError }: { addError: (m: string) => void }) {
     setCancelling(true);
     try {
       const res = await fetch('/api/admin/docai/cancel-all', { method: 'POST' });
-      if (!res.ok) throw new Error('Cancel request failed');
       const result = await res.json();
+      if (!res.ok) throw new Error(result.error || `Server error ${res.status}`);
       setCancelResult(result);
       await checkStatus(); // refresh status after cancel
     } catch (e: any) {

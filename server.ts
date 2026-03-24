@@ -19,14 +19,13 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 import { authRouter, requireAuth } from './server/auth.js';
-import { getEnv, getDocAI, getGcpProjectId, getGcpCredentials } from './server/config.js';
-import { GoogleAuth } from 'google-auth-library';
+import { getEnv, getDocAI } from './server/config.js';
 import {
   createCase, getCase, listCases, updateCase, deleteCase,
 } from './server/cases.js';
 import { signedReadUrl, getBucketUsageBytes, listObjects, deletePrefix, BUCKET_AUTH, BUCKET_STAGING, BUCKET_OUTPUT } from './server/gcs.js';
 import { deleteCaseRows, deleteOrphanRows } from './server/bigquery.js';
-import { runPipeline, cancelPipeline, FileInput } from './server/pipeline/orchestrator.js';
+import { runPipeline, cancelPipeline, getActiveLRONames, FileInput } from './server/pipeline/orchestrator.js';
 import { runPreflight } from './server/preflight.js';
 import { DEFAULT_TABLE1_PROMPT, DEFAULT_TABLE2_PROMPT } from './server/pipeline/prompts.js';
 
@@ -391,53 +390,36 @@ app.post('/api/admin/purge-orphans', async (_req: Request, res: Response) => {
   }
 });
 
-// ── DocAI REST helpers ────────────────────────────────────────────────────────
-// The gRPC operationsClient does not expose ListOperations on the
-// us-documentai.googleapis.com endpoint, so we use the REST API directly.
-
-let _docaiAuthClient: any = null;
-async function getDocAIAuthClient(): Promise<any> {
-  if (!_docaiAuthClient) {
-    const creds = getGcpCredentials();
-    const auth = new GoogleAuth({
-      ...(creds && { credentials: creds }),
-      scopes: ['https://www.googleapis.com/auth/cloud-platform'],
-    });
-    _docaiAuthClient = await auth.getClient();
-  }
-  return _docaiAuthClient;
-}
-
-async function listDocAIPendingOps(projectId: string): Promise<{ name: string; state: string }[]> {
-  const client = await getDocAIAuthClient();
-  const url = `https://us-documentai.googleapis.com/v1/projects/${projectId}/locations/us/operations?pageSize=100`;
-  const res = await client.request({ url });
-  const ops: any[] = res.data?.operations || [];
-  return ops
-    .filter((op: any) => !op.done)
-    .map((op: any) => ({
-      name: op.name as string,
-      state: op.metadata?.commonMetadata?.state || op.metadata?.state || 'RUNNING',
-    }));
-}
-
-async function cancelDocAIOp(client: any, opName: string): Promise<void> {
-  // opName is already the full resource path, e.g.
-  // projects/643927424109/locations/us/operations/12345
-  await client.request({
-    url: `https://us-documentai.googleapis.com/v1/${opName}:cancel`,
-    method: 'POST',
-  });
-}
-
 // ── Admin: DocAI operations monitor ──────────────────────────────────────────
+// DocAI's operations API only supports GetOperation and CancelOperation —
+// ListOperations is not implemented (neither gRPC nor REST).
+// We track active LRO names in-memory in the orchestrator and call GetOperation
+// on each individually to get current status.
+
 app.get('/api/admin/docai/operations', async (_req: Request, res: Response) => {
   try {
-    const projectId = getGcpProjectId();
+    const docai = getDocAI();
 
-    const pendingOperations = await listDocAIPendingOps(projectId);
+    // Collect all tracked LRO names from the in-memory map
+    const lroMap = getActiveLRONames();
+    const allNames: string[] = [];
+    for (const names of lroMap.values()) allNames.push(...names);
 
-    // Firestore: cases currently marked 'processing'
+    // Check each LRO's current status via GetOperation (IS supported by DocAI)
+    const pendingOperations = (await Promise.all(
+      allNames.map(async (name) => {
+        try {
+          const [op] = await docai.operationsClient.getOperation({ name });
+          if (op.done) return null;
+          const meta = op.metadata as any;
+          const state = meta?.commonMetadata?.state || meta?.state || 'RUNNING';
+          return { name, state };
+        } catch {
+          return { name, state: 'UNKNOWN' };
+        }
+      }),
+    )).filter(Boolean) as { name: string; state: string }[];
+
     const cases = await listCases();
     const processingCases = cases
       .filter(c => c.status === 'processing')
@@ -451,13 +433,16 @@ app.get('/api/admin/docai/operations', async (_req: Request, res: Response) => {
 
 app.post('/api/admin/docai/cancel-all', async (_req: Request, res: Response) => {
   try {
-    const projectId = getGcpProjectId();
-    const client = await getDocAIAuthClient();
+    const docai = getDocAI();
 
-    // List and cancel all pending DocAI LROs via REST
-    const pendingOps = await listDocAIPendingOps(projectId);
+    // Cancel all in-memory tracked LROs via CancelOperation (IS supported by DocAI)
+    const lroMap = getActiveLRONames();
+    const allNames: string[] = [];
+    for (const names of lroMap.values()) allNames.push(...names);
     await Promise.all(
-      pendingOps.map(op => cancelDocAIOp(client, op.name).catch(() => {})),
+      allNames.map(name =>
+        (docai.operationsClient as any).cancelOperation({ name }).catch(() => {}),
+      ),
     );
 
     // Revert all processing cases to 'draft' and cancel in-memory pipelines
@@ -470,7 +455,7 @@ app.post('/api/admin/docai/cancel-all', async (_req: Request, res: Response) => 
       }),
     );
 
-    res.json({ cancelledLROs: pendingOps.length, cancelledCases: processingCases.length, lroError: null });
+    res.json({ cancelledLROs: allNames.length, cancelledCases: processingCases.length, lroError: null });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
