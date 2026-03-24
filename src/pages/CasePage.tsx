@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   UploadCloud, Loader2, Download, ChevronLeft, ChevronRight, X,
-  PanelRightClose, PanelRightOpen, FileText, RefreshCw, AlertCircle, CheckCircle2, Play,
+  PanelRightClose, PanelRightOpen, FileText, RefreshCw, AlertCircle, CheckCircle2, Play, StopCircle,
 } from 'lucide-react';
 import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
@@ -40,6 +40,8 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelledFileInfo, setCancelledFileInfo] = useState<Array<{ name: string; size: number }>>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // SSE log stream
@@ -92,6 +94,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
 
       // Reload case data when processing finishes
       if (entry.message.includes('Pipeline complete')) {
+        setCancelledFileInfo([]);
         setTimeout(loadCase, 1500);
         setTimeout(() => {
           setSuccessToast(caseData?.patientName || 'The report');
@@ -112,6 +115,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
       if (!f.type.includes('pdf')) { addError(`"${f.name}" is not a PDF.`); return; }
       if (f.size > 2 * 1024 * 1024 * 1024) { addError(`"${f.name}" exceeds the 2 GB limit.`); return; }
     }
+    setCancelledFileInfo([]); // clear cancelled list once user starts re-staging
     setPendingFiles(prev => {
       const existing = new Set(prev.map(f => f.name));
       return [...prev, ...files.filter(f => !existing.has(f.name))];
@@ -145,8 +149,22 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
 
   const startProcessing = () => {
     const files = pendingFiles;
+    setCancelledFileInfo(files.map(f => ({ name: f.name, size: f.size })));
     setPendingFiles([]);
     handleUpload(files);
+  };
+
+  const handleCancel = async () => {
+    setCancelling(true);
+    try {
+      const res = await fetch(`/api/cases/${id}/cancel`, { method: 'POST' });
+      if (!res.ok) throw new Error('Cancel request failed');
+      await loadCase();
+    } catch {
+      addError('Could not cancel processing. Please try again.');
+    } finally {
+      setCancelling(false);
+    }
   };
 
   const onFilePick = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -313,6 +331,37 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                 </div>
               )}
 
+              {/* Cancelled files — shown after cancel until user re-stages new files */}
+              {pendingFiles.length === 0 && cancelledFileInfo.length > 0 && (
+                <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl overflow-hidden shadow-sm">
+                  <div className="px-5 py-3.5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                    <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+                      {cancelledFileInfo.length} file{cancelledFileInfo.length !== 1 ? 's' : ''} ready to process
+                    </p>
+                    <button
+                      onClick={() => setCancelledFileInfo([])}
+                      className="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+                    >
+                      Clear all
+                    </button>
+                  </div>
+                  <ul className="divide-y divide-slate-50 dark:divide-slate-800">
+                    {cancelledFileInfo.map((f, idx) => (
+                      <li key={idx} className="flex items-center gap-3 px-5 py-3 opacity-50">
+                        <FileText className="w-4 h-4 text-slate-400 shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-slate-800 dark:text-slate-200 truncate">{f.name}</p>
+                          <p className="text-xs text-slate-400">{formatBytes(f.size)}</p>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="px-5 py-3.5 bg-slate-50 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-800">
+                    <p className="text-xs text-slate-500">Drop or select these files above to reprocess them.</p>
+                  </div>
+                </div>
+              )}
+
               {/* Staged file list */}
               {pendingFiles.length > 0 && (
                 <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl overflow-hidden shadow-sm">
@@ -398,6 +447,16 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                 <p className="text-base font-semibold text-slate-900 dark:text-slate-100">Processing records…</p>
                 <p className="text-sm text-slate-500 mt-1">This may take up to 2 hours, depending on network traffic on the OCR server.</p>
               </div>
+              <button
+                onClick={handleCancel}
+                disabled={cancelling}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-500 dark:text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 border border-slate-300 dark:border-slate-600 hover:border-rose-400 dark:hover:border-rose-500 rounded-xl transition-colors disabled:opacity-50"
+              >
+                {cancelling
+                  ? <Loader2 className="w-4 h-4 animate-spin" />
+                  : <StopCircle className="w-4 h-4" />}
+                {cancelling ? 'Cancelling…' : 'Cancel Processing'}
+              </button>
             </div>
           )}
 

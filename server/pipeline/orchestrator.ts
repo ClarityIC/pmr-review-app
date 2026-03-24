@@ -195,9 +195,14 @@ export async function runPipeline(opts: RunOptions): Promise<void> {
 
   } catch (err: any) {
     const msg = err?.message || String(err);
-    log('error', `Pipeline failed: ${msg}`);
-    console.error('[pipeline] Fatal error:', err);
-    await updateCase(caseId, { status: 'error', errorMessage: msg }).catch(() => {});
+    if (cancelledRuns.has(caseId)) {
+      // Cancel endpoint already set status → 'draft'; don't overwrite with 'error'
+      log('warn', 'Processing was cancelled.');
+    } else {
+      log('error', `Pipeline failed: ${msg}`);
+      console.error('[pipeline] Fatal error:', err);
+      await updateCase(caseId, { status: 'error', errorMessage: msg }).catch(() => {});
+    }
   } finally {
     activeRuns.delete(caseId);
     cancelledRuns.delete(caseId);

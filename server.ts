@@ -148,6 +148,17 @@ app.delete('/api/cases/:id', async (req: Request, res: Response) => {
   }
 });
 
+// ── Cancel active processing (keeps the case, reverts to draft) ───────────────
+app.post('/api/cases/:id/cancel', async (req: Request, res: Response) => {
+  try {
+    await cancelPipeline(req.params.id);
+    await updateCase(req.params.id, { status: 'draft' });
+    res.json({ ok: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── File upload → triggers pipeline ─────────────────────────────────────────
 app.post('/api/cases/:id/upload',
   upload.array('files', 20),
