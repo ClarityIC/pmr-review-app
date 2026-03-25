@@ -702,6 +702,8 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                   Table 1: Medical Chronology <span className="text-slate-500 font-normal">({caseData.table1.length} records)</span>
                 </h2>
               </button>
+              {!t1Collapsed && (
+              <>
               <div className="flex items-center gap-3 mb-2">
                 {caseData.table1Versions?.length > 1 && (
                   <VersionDropdown
@@ -722,7 +724,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                   <Download className="w-3.5 h-3.5" /> Download for Excel
                 </button>
               </div>
-              {!t1Collapsed && (
+
                 <div
                   ref={t1ScrollRef}
                   className="relative bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl overflow-auto shadow-sm max-h-[70vh]"
@@ -780,6 +782,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                     </tbody>
                   </table>
                 </div>
+              </>
               )}
             </section>
           )}
@@ -796,6 +799,8 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                   Table 2: Patient Conditions <span className="text-slate-500 font-normal">({caseData.table2.length} conditions)</span>
                 </h2>
               </button>
+              {!t2Collapsed && (
+              <>
               <div className="flex items-center gap-3 mb-2">
                 {caseData.table2Versions?.length > 1 && (
                   <VersionDropdown
@@ -816,7 +821,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                   <Download className="w-3.5 h-3.5" /> Download for Excel
                 </button>
               </div>
-              {!t2Collapsed && (
+
                 <div
                   ref={t2ScrollRef}
                   className="relative bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl overflow-auto shadow-sm max-h-[70vh]"
@@ -865,6 +870,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                     </tbody>
                   </table>
                 </div>
+              </>
               )}
             </section>
           )}
