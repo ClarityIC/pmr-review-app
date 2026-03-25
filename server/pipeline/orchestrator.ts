@@ -232,6 +232,7 @@ export async function runPipeline(opts: RunOptions): Promise<void> {
       table1ActiveVersion: 0,
       table2ActiveVersion: 0,
       dateProcessed: now,
+      totalPages,
     });
 
     log('success', `Pipeline complete! Table 1: ${table1Rows.length} records, Table 2: ${table2Rows.length} conditions`);

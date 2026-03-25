@@ -438,13 +438,13 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
               {' · '}<StatusBadge status={caseData.status} />
             </p>
           </div>
+          {hasResults && (
+            <div className="flex items-center gap-1 shrink-0">
+              <a href="#table1" className="text-sm font-semibold text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 px-3 py-1.5 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors">T1: MedChron</a>
+              <a href="#table2" className="text-sm font-semibold text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 px-3 py-1.5 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors">T2: Conditions</a>
+            </div>
+          )}
         </div>
-        {hasResults && (
-          <div className="flex items-center gap-1 mt-2 ml-9">
-            <a href="#table1" className="text-sm font-semibold text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 px-3 py-1.5 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors">T1: MedChron</a>
-            <a href="#table2" className="text-sm font-semibold text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 px-3 py-1.5 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors">T2: Conditions</a>
-          </div>
-        )}
       </div>
 
       <div className="flex flex-1 overflow-hidden">
@@ -647,42 +647,41 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
             </div>
           )}
 
-          {/* ── Results: re-upload button when complete ── */}
-          {hasResults && !isProcessing && pendingFiles.length === 0 && (
-            <div className="px-6 pt-4 flex justify-end">
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl transition-colors shadow-sm"
-              >
-                <ArrowUp className="w-4 h-4" /> Upload more files
-              </button>
-            </div>
-          )}
-
-          {/* ── Source files + compilation timestamp ── */}
+          {/* ── Source files + compilation timestamp + upload button ── */}
           {hasResults && caseData.files?.length > 0 && (
             <div className="px-6 pt-6 pb-2">
               <div className="bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden">
-                <button
-                  onClick={() => setCompiledFromOpen(v => !v)}
-                  className="w-full flex items-center justify-between px-4 py-3 text-xs hover:bg-slate-100 dark:hover:bg-slate-700/40 transition-colors"
-                >
-                  <div className="flex items-center gap-2">
+                <div className="flex items-center justify-between px-4 py-3">
+                  <button
+                    onClick={() => setCompiledFromOpen(v => !v)}
+                    className="flex items-center gap-2 text-sm hover:opacity-80 transition-opacity"
+                  >
                     <ChevronRight className={cn('w-3.5 h-3.5 text-slate-400 transition-transform', compiledFromOpen && 'rotate-90')} />
-                    <span className="font-semibold text-slate-700 dark:text-slate-300">Compiled From</span>
-                    <span className="text-slate-500 dark:text-slate-400">{caseData.files.length} file{caseData.files.length !== 1 ? 's' : ''}</span>
-                  </div>
-                  {caseData.updatedAt && (
-                    <span className="text-slate-600 dark:text-slate-400">
-                      Generated {new Date(caseData.updatedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })}
+                    <span className="font-semibold text-slate-800 dark:text-slate-200">
+                      Compiled{caseData.updatedAt && <> on {new Date(caseData.updatedAt).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: '2-digit' })} at {new Date(caseData.updatedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}</>} from {caseData.files.length} file{caseData.files.length !== 1 ? 's' : ''}
                     </span>
+                    {(() => {
+                      const totalBytes = caseData.files.reduce((sum: number, f: any) => sum + (f.sizeBytes || 0), 0);
+                      const parts: string[] = [];
+                      if (caseData.totalPages) parts.push(`${caseData.totalPages} pages`);
+                      if (totalBytes > 0) parts.push(formatBytes(totalBytes));
+                      return parts.length > 0 ? <span className="text-slate-500 dark:text-slate-400 font-normal ml-1">({parts.join(', ')})</span> : null;
+                    })()}
+                  </button>
+                  {!isProcessing && pendingFiles.length === 0 && (
+                    <button
+                      onClick={() => fileInputRef.current?.click()}
+                      className="flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors shadow-sm shrink-0"
+                    >
+                      <ArrowUp className="w-3.5 h-3.5" /> Upload more files
+                    </button>
                   )}
-                </button>
+                </div>
                 {compiledFromOpen && (
                   <div className="px-4 pb-3 pt-0 border-t border-slate-200 dark:border-slate-700">
                     <ul className="mt-2 space-y-1">
                       {caseData.files.map((f: any, i: number) => (
-                        <li key={i} className="text-xs text-slate-600 dark:text-slate-400 pl-5">• {f.name}</li>
+                        <li key={i} className="text-sm text-slate-700 dark:text-slate-300 pl-5">• {f.name} <span className="text-slate-500 dark:text-slate-400">({formatBytes(f.sizeBytes || 0)})</span></li>
                       ))}
                     </ul>
                   </div>

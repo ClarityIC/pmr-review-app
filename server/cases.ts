@@ -55,6 +55,7 @@ export interface CaseRecord {
   regeneratingTable?: 'table1' | 'table2' | null;
   // Per-run processing log (persisted for cross-instance SSE replay)
   processingLogs?: Array<{ level: string; message: string; timestamp: string; seq: number }>;
+  totalPages?: number;
 }
 
 const COLLECTION = 'cases';
