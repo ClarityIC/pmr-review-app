@@ -22,8 +22,8 @@ import SortableFilterableHeader, {
 import { User } from '../main.js';
 import { cn, formatDate, formatBytes } from '../lib/utils.js';
 
-// Configure pdf.js worker
-pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
+// Configure pdf.js worker — must use react-pdf's bundled pdfjs-dist to avoid version mismatch
+pdfjs.GlobalWorkerOptions.workerSrc = new URL('react-pdf/node_modules/pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
 
 interface Props {
   user: User | null; onLogout: () => void;
@@ -80,6 +80,8 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
   const [pageNum, setPageNum] = useState(1);
   const [showPdfPane, setShowPdfPane] = useState(true);
   const [pdfLoading, setPdfLoading] = useState(false);
+  const [pdfPaneWidth, setPdfPaneWidth] = useState(420);
+  const isResizingRef = useRef(false);
 
   // ── Load case ──────────────────────────────────────────────────────────────
   const loadCase = useCallback(async () => {
@@ -844,11 +846,29 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
           {showPdfPane && pdfUrl && (
             <motion.div
               initial={{ width: 0, opacity: 0 }}
-              animate={{ width: 420, opacity: 1 }}
+              animate={{ width: pdfPaneWidth, opacity: 1 }}
               exit={{ width: 0, opacity: 0 }}
-              className="border-l border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 flex flex-col overflow-hidden"
-              style={{ minWidth: 320 }}
+              className="relative border-l border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 flex flex-col overflow-hidden"
+              style={{ minWidth: 280, maxWidth: '60vw' }}
             >
+              {/* Resize handle */}
+              <div
+                className="absolute left-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-indigo-400/40 active:bg-indigo-500/50 z-10 transition-colors"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  isResizingRef.current = true;
+                  const startX = e.clientX;
+                  const startW = pdfPaneWidth;
+                  const onMove = (ev: MouseEvent) => {
+                    if (!isResizingRef.current) return;
+                    const newW = Math.max(280, Math.min(window.innerWidth * 0.6, startW - (ev.clientX - startX)));
+                    setPdfPaneWidth(newW);
+                  };
+                  const onUp = () => { isResizingRef.current = false; window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+                  window.addEventListener('mousemove', onMove);
+                  window.addEventListener('mouseup', onUp);
+                }}
+              />
               {/* PDF header */}
               <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 space-y-2">
                 <div className="flex items-center justify-between">
