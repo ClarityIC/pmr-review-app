@@ -19,11 +19,11 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 import { authRouter, requireAuth } from './server/auth.js';
-import { getEnv, getDocAI } from './server/config.js';
+import { getEnv, getDocAI, getStorage } from './server/config.js';
 import {
   createCase, getCase, listCases, updateCase, deleteCase,
 } from './server/cases.js';
-import { signedReadUrl, signedWriteUrl, getBucketUsageBytes, listObjects, deletePrefix, deleteObject, downloadFile, BUCKET_AUTH, BUCKET_STAGING, BUCKET_OUTPUT } from './server/gcs.js';
+import { signedWriteUrl, getBucketUsageBytes, listObjects, deletePrefix, deleteObject, downloadFile, BUCKET_AUTH, BUCKET_STAGING, BUCKET_OUTPUT } from './server/gcs.js';
 import { deleteCaseRows, deleteOrphanRows } from './server/bigquery.js';
 import { runPipeline, cancelPipeline, getActiveLRONames, FileInput } from './server/pipeline/orchestrator.js';
 import { regenerateTable } from './server/pipeline/regenerate.js';
@@ -394,8 +394,15 @@ app.get('/api/cases/:id/pdf/:fileId', async (req: Request, res: Response) => {
     if (!caseRecord) return res.status(404).json({ error: 'Case not found' });
     const file = caseRecord.files.find(f => f.id === req.params.fileId);
     if (!file) return res.status(404).json({ error: 'File not found' });
-    const url = await signedReadUrl(file.gcsBucket, file.gcsPath, 60);
-    res.json({ url });
+    // Stream the PDF directly through Express to avoid GCS CORS issues
+    const gcsFile = getStorage().bucket(file.gcsBucket).file(file.gcsPath);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(file.name)}"`);
+    const stream = gcsFile.createReadStream();
+    stream.on('error', (err: any) => {
+      if (!res.headersSent) res.status(500).json({ error: err.message });
+    });
+    stream.pipe(res);
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }

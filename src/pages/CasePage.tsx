@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
   UploadCloud, Loader2, Download, ChevronLeft, ChevronRight, ChevronDown, X,
   PanelRightClose, PanelRightOpen, FileText, ArrowUp, AlertCircle, CheckCircle2, Play, StopCircle, RotateCcw,
+  ZoomIn, ZoomOut,
 } from 'lucide-react';
 import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
@@ -94,33 +95,59 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
 
   useEffect(() => { loadCase(); }, [loadCase]);
 
-  // ── SSE: subscribe when case is processing ────────────────────────────────
+  // ── SSE: subscribe when case is processing (with auto-reconnect) ─────────
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const seenLogsRef = useRef<Set<string>>(new Set());
+
   useEffect(() => {
     if (!caseData) return;
     if (caseData.status !== 'processing') return;
 
-    const es = new EventSource(`/api/cases/${id}/logs`);
-    sseRef.current = es;
+    let disposed = false;
 
-    es.onmessage = e => {
-      const entry: LogEntry = JSON.parse(e.data);
-      setLogs(prev => [...prev, entry]);
+    const connect = () => {
+      if (disposed) return;
+      const es = new EventSource(`/api/cases/${id}/logs`);
+      sseRef.current = es;
 
-      // Reload case data when processing finishes
-      if (entry.message.includes('Pipeline complete')) {
-        setCancelledFileInfo([]);
-        setTimeout(loadCase, 1500);
-        setTimeout(() => {
-          setSuccessToast(caseData?.patientName || 'The report');
-        }, 2000);
+      es.onmessage = e => {
+        const entry: LogEntry = JSON.parse(e.data);
+        // Deduplicate: Firestore replay resends already-seen entries on reconnect
+        const key = `${entry.timestamp}|${entry.message}`;
+        if (seenLogsRef.current.has(key)) return;
+        seenLogsRef.current.add(key);
+
+        setLogs(prev => [...prev, entry]);
+
+        // Reload case data when processing finishes
+        if (entry.message.includes('Pipeline complete')) {
+          setCancelledFileInfo([]);
+          setTimeout(loadCase, 1500);
+          setTimeout(() => {
+            setSuccessToast(caseData?.patientName || 'The report');
+          }, 2000);
+          es.close();
+        } else if (entry.level === 'error') {
+          setTimeout(loadCase, 1500);
+          es.close();
+        }
+      };
+      es.onerror = () => {
         es.close();
-      } else if (entry.level === 'error') {
-        setTimeout(loadCase, 1500);
-        es.close();
-      }
+        // Auto-reconnect after 3s (e.g. deploy, network blip)
+        if (!disposed) {
+          reconnectTimerRef.current = setTimeout(connect, 3000);
+        }
+      };
     };
-    es.onerror = () => { es.close(); };
-    return () => es.close();
+
+    connect();
+
+    return () => {
+      disposed = true;
+      sseRef.current?.close();
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+    };
   }, [caseData?.status, id]);
 
   // ── File staging + upload ─────────────────────────────────────────────────
@@ -244,18 +271,17 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
   };
 
   // ── PDF viewer ─────────────────────────────────────────────────────────────
-  const openPdfAtPage = useCallback(async (fileId: string, fileName: string, page: number) => {
-    setPdfLoading(true);
+  const [pdfFileId, setPdfFileId] = useState<string | null>(null);
+  const [pdfScale, setPdfScale] = useState(1.0);
+
+  const openPdfAtPage = useCallback((fileId: string, fileName: string, page: number) => {
     setShowPdfPane(true);
     setPdfName(fileName);
+    setPdfFileId(fileId);
     setPageNum(page);
-    try {
-      const res = await fetch(`/api/cases/${id}/pdf/${fileId}`);
-      if (!res.ok) throw new Error('Could not get PDF URL');
-      const { url } = await res.json();
-      setPdfUrl(url);
-    } catch (e: any) { console.error('[pdf/open]', e); addError("Couldn't open this PDF. Please try again."); }
-    finally { setPdfLoading(false); }
+    setPdfScale(1.0);
+    // Stream directly through Express — no signed URL needed
+    setPdfUrl(`/api/cases/${id}/pdf/${fileId}`);
   }, [id]);
 
   // ── Citation link handler: "FileName.pdf (Page 5)" → opens viewer ─────────
@@ -577,6 +603,16 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
               <div className="text-center">
                 <p className="text-base font-semibold text-slate-900 dark:text-slate-100">Processing records…</p>
                 <p className="text-sm text-slate-500 mt-1">This may take up to 2 hours, depending on network traffic on the OCR server.</p>
+                {logs.length > 0 && (() => {
+                  const last = logs[logs.length - 1];
+                  let ts = '';
+                  try { ts = new Date(last.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }); } catch { ts = last.timestamp; }
+                  return (
+                    <p className="text-xs font-mono text-slate-400 dark:text-slate-500 mt-2 text-center">
+                      {ts} — {last.message}
+                    </p>
+                  );
+                })()}
               </div>
               <button
                 onClick={handleCancel}
@@ -814,24 +850,45 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
               style={{ minWidth: 320 }}
             >
               {/* PDF header */}
-              <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-slate-700">
-                <div className="flex items-center gap-2 min-w-0">
-                  <FileText className="w-4 h-4 text-slate-400 shrink-0" />
-                  <span className="text-sm font-medium text-slate-700 dark:text-slate-300 truncate">{pdfName}</span>
+              <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <FileText className="w-4 h-4 text-slate-400 shrink-0" />
+                    <span className="text-sm font-medium text-slate-700 dark:text-slate-300 truncate">{pdfName}</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => setPageNum(p => Math.max(1, p - 1))} disabled={pageNum <= 1} className="p-1 text-slate-400 hover:text-slate-700 disabled:opacity-30 transition-colors">
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                    <span className="text-xs text-slate-500 tabular-nums w-16 text-center">
+                      {pageNum} / {numPages || '?'}
+                    </span>
+                    <button onClick={() => setPageNum(p => Math.min(numPages, p + 1))} disabled={pageNum >= numPages} className="p-1 text-slate-400 hover:text-slate-700 disabled:opacity-30 transition-colors">
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                    <button onClick={() => { setShowPdfPane(false); setPdfUrl(null); }} className="ml-1 p-1 text-slate-400 hover:text-rose-500 transition-colors">
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
-                <div className="flex items-center gap-1">
-                  <button onClick={() => setPageNum(p => Math.max(1, p - 1))} disabled={pageNum <= 1} className="p-1 text-slate-400 hover:text-slate-700 disabled:opacity-30 transition-colors">
-                    <ChevronLeft className="w-4 h-4" />
-                  </button>
-                  <span className="text-xs text-slate-500 tabular-nums w-16 text-center">
-                    {pageNum} / {numPages || '?'}
-                  </span>
-                  <button onClick={() => setPageNum(p => Math.min(numPages, p + 1))} disabled={pageNum >= numPages} className="p-1 text-slate-400 hover:text-slate-700 disabled:opacity-30 transition-colors">
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
-                  <button onClick={() => { setShowPdfPane(false); setPdfUrl(null); }} className="ml-1 p-1 text-slate-400 hover:text-rose-500 transition-colors">
-                    <X className="w-4 h-4" />
-                  </button>
+                {/* Zoom controls + download */}
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => setPdfScale(s => Math.max(0.5, s - 0.15))} className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors" title="Zoom out">
+                      <ZoomOut className="w-3.5 h-3.5" />
+                    </button>
+                    <button onClick={() => setPdfScale(1.0)} className="text-[10px] text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 px-1.5 py-0.5 rounded transition-colors tabular-nums" title="Reset zoom">
+                      {Math.round(pdfScale * 100)}%
+                    </button>
+                    <button onClick={() => setPdfScale(s => Math.min(3, s + 0.15))} className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors" title="Zoom in">
+                      <ZoomIn className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                  {pdfUrl && (
+                    <a href={pdfUrl} download={pdfName} className="flex items-center gap-1 text-[10px] text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors" title="Download PDF">
+                      <Download className="w-3.5 h-3.5" /> Download
+                    </a>
+                  )}
                 </div>
               </div>
 
@@ -846,7 +903,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                     loading={<Loader2 className="w-6 h-6 text-indigo-500 animate-spin mt-8" />}
                     error={<p className="text-sm text-rose-500 p-4">Failed to load PDF.</p>}
                   >
-                    <Page pageNumber={pageNum} width={380} renderAnnotationLayer renderTextLayer />
+                    <Page pageNumber={pageNum} width={380 * pdfScale} renderAnnotationLayer renderTextLayer />
                   </Document>
                 )}
               </div>

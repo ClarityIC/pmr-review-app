@@ -20,6 +20,13 @@ const OCR_PROCESSOR_VERSION     = 'pretrained-ocr-v2.1-2024-08-07';
 const LAYOUT_PROCESSOR_VERSION  = 'pretrained-layout-parser-v1.6-2026-01-13';
 const LRO_POLL_INTERVAL_MS      = 10_000; // exactly 10 seconds — spec requirement
 
+function formatElapsed(totalSeconds: number): string {
+  if (totalSeconds < 60) return `${Math.round(totalSeconds)}s`;
+  const m = Math.floor(totalSeconds / 60);
+  const s = Math.round(totalSeconds % 60);
+  return `${m}m:${String(s).padStart(2, '0')}s`;
+}
+
 export type DocAIResult =
   | { path: 'path1-sync'; ocrDocs: any[]; layoutDocs: any[] }
   | { path: 'path2-async'; ocrOutputPrefix: string; layoutOutputPrefix: string };
@@ -120,8 +127,8 @@ async function processWithRetry(
           ...(processOptions ? { processOptions } : {}),
         });
         if (!response.document) throw new Error('No document returned');
-        const elapsed = ((Date.now() - startMs) / 1000).toFixed(1);
-        log('info', `[Step 2] ${label} chunk ${chunk.chunkIndex} complete (${elapsed}s)`);
+        const elapsed = (Date.now() - startMs) / 1000;
+        log('info', `[Step 2] ${label} chunk ${chunk.chunkIndex} complete (${formatElapsed(elapsed)})`);
         return { ok: true, doc: response.document };
       } catch (e: any) {
         const code = e?.code;
@@ -326,7 +333,7 @@ async function pollLRO(docai: any, operationName: string, label: string, log: Lo
       if (op.error) {
         throw new Error(`[Step 2] ${label} LRO failed: ${JSON.stringify(op.error)}`);
       }
-      log('success', `[Step 2] ${label} processor completed successfully (${attempts} polls, ~${attempts * 10}s)`);
+      log('success', `[Step 2] ${label} processor completed successfully (${attempts} polls, ~${formatElapsed(attempts * 10)})`);
       return;
     }
 
