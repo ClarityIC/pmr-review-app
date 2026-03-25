@@ -29,7 +29,7 @@ export async function step5(
 
   const genai = getGenAI();
   let markdownTable = '';
-  const MAX_GEMINI_ATTEMPTS = 3;
+  const MAX_GEMINI_ATTEMPTS = 5;
   for (let attempt = 1; attempt <= MAX_GEMINI_ATTEMPTS; attempt++) {
     try {
       const response = await genai.models.generateContent({
@@ -44,13 +44,18 @@ export async function step5(
       markdownTable = response.text || '';
       break;
     } catch (e: any) {
+      const msg = e?.message || '';
       const isRetryable = e?.code === 'UND_ERR_HEADERS_TIMEOUT' ||
         e?.cause?.code === 'UND_ERR_HEADERS_TIMEOUT' ||
-        (e?.message || '').includes('fetch failed') ||
-        (e?.message || '').includes('UNAVAILABLE') ||
-        (e?.message || '').includes('DEADLINE_EXCEEDED');
+        msg.includes('fetch failed') ||
+        msg.includes('UNAVAILABLE') ||
+        msg.includes('DEADLINE_EXCEEDED') ||
+        msg.includes('RESOURCE_EXHAUSTED') ||
+        msg.includes('429');
       if (isRetryable && attempt < MAX_GEMINI_ATTEMPTS) {
-        const delay = attempt * 5_000;
+        const delay = msg.includes('RESOURCE_EXHAUSTED') || msg.includes('429')
+          ? attempt * 15_000   // longer backoff for rate limits
+          : attempt * 5_000;
         log('warn', `[Step 5] Gemini attempt ${attempt}/${MAX_GEMINI_ATTEMPTS} failed: ${e.message} — retrying in ${delay / 1000}s`);
         await new Promise(r => setTimeout(r, delay));
         continue;

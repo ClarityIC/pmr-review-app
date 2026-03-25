@@ -110,8 +110,13 @@ export async function regenerateTable(
   } catch (err: any) {
     const msg = err?.message || String(err);
     log('error', `Regeneration failed: ${msg}`);
-    // Clear the regeneration lock but do NOT change case status
-    await updateCase(caseId, { regeneratingTable: null }).catch(() => {});
+    // Clear the regeneration lock but do NOT change case status.
+    // Retry once if the first clear fails — a stuck lock blocks all future regenerations.
+    try {
+      await updateCase(caseId, { regeneratingTable: null });
+    } catch {
+      try { await updateCase(caseId, { regeneratingTable: null }); } catch {}
+    }
     throw err;
   }
 }

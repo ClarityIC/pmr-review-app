@@ -692,7 +692,15 @@ app.post('/api/cases/:id/regenerate/:table', async (req: Request, res: Response)
       return res.status(400).json({ error: 'Case must be in "complete" status to regenerate a table.' });
     }
     if (caseRecord.regeneratingTable) {
-      return res.status(409).json({ error: `Already regenerating ${caseRecord.regeneratingTable}. Please wait.` });
+      // Treat lock as stale if updatedAt is more than 10 minutes ago (e.g. server crashed, clear failed)
+      const updatedAt = caseRecord.updatedAt ? new Date(caseRecord.updatedAt).getTime() : 0;
+      const staleAfterMs = 10 * 60 * 1000;
+      if (Date.now() - updatedAt < staleAfterMs) {
+        return res.status(409).json({ error: `Already regenerating ${caseRecord.regeneratingTable}. Please wait.` });
+      }
+      // Stale lock — clear it and proceed
+      console.warn(`[regenerate] Clearing stale regeneration lock for case ${req.params.id}`);
+      await updateCase(req.params.id, { regeneratingTable: null });
     }
 
     const tableKey = req.params.table === 'table2' ? 'table2' : 'table1';
