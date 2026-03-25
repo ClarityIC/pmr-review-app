@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Moon, Sun, Settings, X, LogOut, ChevronDown } from 'lucide-react';
+import { Moon, Sun, Settings, X, LogOut, ChevronDown, ChevronRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils.js';
 
@@ -21,19 +21,35 @@ export default function NavBar({ user, onLogout, darkMode, onToggleDark }: Props
 
   return (
     <header className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-5 py-3 flex items-center justify-between sticky top-0 z-30 shadow-sm">
-      {/* Logo + Title */}
-      <button
-        onClick={() => navigate('/cases')}
-        className="flex items-center gap-3 hover:opacity-80 transition-opacity"
-      >
-        <img src={darkMode ? '/clarity-logo-dark.webp' : '/clarity-logo.png'} alt="Clarity IC" className="h-7 object-contain" />
-        <div>
-          <div className="text-base font-semibold tracking-tight text-slate-900 dark:text-slate-100">Prior Records Review</div>
-          <div className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">
-            {location.pathname.startsWith('/cases/') ? 'Case Review' : 'Cases'}
-          </div>
-        </div>
-      </button>
+      {/* Logo + Breadcrumb */}
+      <div className="flex items-center gap-3">
+        <button onClick={() => navigate('/cases')} className="hover:opacity-80 transition-opacity shrink-0">
+          <img src={darkMode ? '/clarity-logo-dark.webp' : '/clarity-logo.png'} alt="Clarity IC" className="h-7 object-contain" />
+        </button>
+        <nav className="flex items-center gap-1.5 text-sm">
+          {location.pathname === '/admin' ? (
+            <>
+              <button onClick={() => navigate('/cases')} className="text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors">Prior Records Review</button>
+              <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
+              <span className="font-semibold text-slate-800 dark:text-slate-100">Admin</span>
+            </>
+          ) : location.pathname.startsWith('/cases/') ? (
+            <>
+              <span className="text-slate-500 dark:text-slate-400 hidden sm:inline">Prior Records Review</span>
+              <ChevronRight className="w-3.5 h-3.5 text-slate-400 hidden sm:inline" />
+              <button onClick={() => navigate('/cases')} className="text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors">Cases</button>
+              <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
+              <span className="font-semibold text-slate-800 dark:text-slate-100">Case Review</span>
+            </>
+          ) : (
+            <>
+              <span className="text-slate-500 dark:text-slate-400 hidden sm:inline">Prior Records Review</span>
+              <ChevronRight className="w-3.5 h-3.5 text-slate-400 hidden sm:inline" />
+              <span className="font-semibold text-slate-800 dark:text-slate-100">Cases</span>
+            </>
+          )}
+        </nav>
+      </div>
 
       {/* Right controls */}
       <div className="flex items-center gap-2">

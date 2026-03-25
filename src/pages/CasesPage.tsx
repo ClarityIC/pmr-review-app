@@ -101,7 +101,7 @@ export default function CasesPage({ user, onLogout, darkMode, onToggleDark, addE
               className="w-full pl-9 pr-4 py-2.5 text-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400 dark:text-slate-100 placeholder-slate-400"
             />
           </div>
-          <span className="text-sm text-slate-500">{cases.length} case{cases.length !== 1 ? 's' : ''}</span>
+          <span className="text-sm text-slate-600 dark:text-slate-400">{cases.length} case{cases.length !== 1 ? 's' : ''}</span>
           <button
             onClick={() => setShowNewCase(true)}
             className="ml-auto flex items-center gap-2 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors shadow-sm"
@@ -131,7 +131,7 @@ export default function CasesPage({ user, onLogout, darkMode, onToggleDark, addE
         ) : (
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden shadow-sm">
             <table className="w-full text-sm text-left">
-              <thead className="bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 font-medium border-b border-slate-200 dark:border-slate-700 text-xs uppercase tracking-wider">
+              <thead className="bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-medium border-b border-slate-200 dark:border-slate-700 text-xs uppercase tracking-wider">
                 <tr>
                   <th className="px-5 py-3">{thBtn('patientName', 'Patient Name')}</th>
                   <th className="px-5 py-3">{thBtn('dateOfInjury', 'Date of Injury')}</th>
@@ -152,10 +152,10 @@ export default function CasesPage({ user, onLogout, darkMode, onToggleDark, addE
                     )}
                   >
                     <td className="px-5 py-3.5 font-medium text-slate-900 dark:text-slate-100">{c.patientName}</td>
-                    <td className="px-5 py-3.5 text-slate-500 dark:text-slate-400">{c.dateOfInjury}</td>
-                    <td className="px-5 py-3.5 text-slate-500 dark:text-slate-400">{formatDate(c.dateProcessed)}</td>
+                    <td className="px-5 py-3.5 text-slate-600 dark:text-slate-400">{c.dateOfInjury}</td>
+                    <td className="px-5 py-3.5 text-slate-600 dark:text-slate-400">{formatDate(c.dateProcessed)}</td>
                     <td className="px-5 py-3.5"><StatusBadge status={c.status} /></td>
-                    <td className="px-5 py-3.5 text-slate-500 dark:text-slate-400">{c.files?.length || 0}</td>
+                    <td className="px-5 py-3.5 text-slate-600 dark:text-slate-400">{c.files?.length || 0}</td>
                     <td className="px-5 py-3.5">
                       <button
                         onClick={e => handleDelete(e, c.id, c.patientName)}

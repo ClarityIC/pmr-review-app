@@ -113,7 +113,7 @@ function WorkflowTab() {
 
   return (
     <div className="space-y-3">
-      <h2 className="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-4">Document Processing Pipeline</h2>
+      <h2 className="text-sm font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-widest mb-4">Document Processing Pipeline</h2>
       {steps.map((s, i) => (
         <React.Fragment key={s.num}>
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-5">
@@ -181,7 +181,7 @@ function StorageTab({ addError }: { addError: (m: string) => void }) {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-widest">Cloud Storage</h2>
+        <h2 className="text-sm font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-widest">Cloud Storage</h2>
         <button onClick={load} className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-indigo-600 transition-colors">
           <RefreshCw className={cn('w-3.5 h-3.5', loading && 'animate-spin')} /> Refresh
         </button>
@@ -201,7 +201,7 @@ function StorageTab({ addError }: { addError: (m: string) => void }) {
                 style={{ width: `${usedPct}%` }}
               />
             </div>
-            <p className="text-xs text-slate-400 mt-2">{usedPct.toFixed(1)}% used</p>
+            <p className="text-xs text-slate-500 mt-2">{usedPct.toFixed(1)}% used</p>
           </div>
 
           {/* Per-bucket breakdown */}
@@ -211,7 +211,7 @@ function StorageTab({ addError }: { addError: (m: string) => void }) {
                 <HardDrive className="w-4 h-4 text-slate-400" />
                 <div>
                   <div className="text-sm font-medium text-slate-900 dark:text-slate-100">{b.label}</div>
-                  <div className="text-xs text-slate-400 font-mono">{b.name}</div>
+                  <div className="text-xs text-slate-500 font-mono">{b.name}</div>
                 </div>
               </div>
               <div className="text-right">
@@ -228,8 +228,8 @@ function StorageTab({ addError }: { addError: (m: string) => void }) {
       {/* Orphan cleanup */}
       <div className="border-t border-slate-200 dark:border-slate-700 pt-4 space-y-3">
         <div>
-          <h3 className="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-1">Purge Deleted Case Data</h3>
-          <p className="text-sm text-slate-500 dark:text-slate-400">
+          <h3 className="text-sm font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-widest mb-1">Purge Deleted Case Data</h3>
+          <p className="text-sm text-slate-600 dark:text-slate-400">
             Scans Cloud Storage and BigQuery for files belonging to cases that have been deleted from Firestore, then permanently removes them.
           </p>
         </div>
@@ -345,7 +345,7 @@ function PromptsTab({ addError }: { addError: (m: string) => void }) {
           {history.length > 0 && (
             <div className="relative">
               <button onClick={() => setHistoryOpen(v => !v)}
-                className="flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 px-3 py-1.5 border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-900 transition-colors">
+                className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 px-3 py-1.5 border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-900 transition-colors">
                 <Clock className="w-3.5 h-3.5" /> Prompt History ({history.length}) <ChevronDown className="w-3.5 h-3.5" />
               </button>
               <AnimatePresence>
@@ -459,7 +459,7 @@ function OcrRequestsTab({ addError }: { addError: (m: string) => void }) {
       {/* ── Status section ── */}
       <div>
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-widest">
+          <h2 className="text-sm font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-widest">
             Request Status
           </h2>
           <button
@@ -475,7 +475,7 @@ function OcrRequestsTab({ addError }: { addError: (m: string) => void }) {
         {!status && !checking && (
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-8 flex flex-col items-center gap-3 text-center">
             <ScanSearch className="w-8 h-8 text-slate-300 dark:text-slate-600" />
-            <p className="text-sm text-slate-400">Click <span className="font-medium text-slate-600 dark:text-slate-300">Check Status</span> to query Document AI for active OCR requests.</p>
+            <p className="text-sm text-slate-500">Click <span className="font-medium text-slate-600 dark:text-slate-300">Check Status</span> to query Document AI for active OCR requests.</p>
           </div>
         )}
 
@@ -518,7 +518,7 @@ function OcrRequestsTab({ addError }: { addError: (m: string) => void }) {
             {status.pendingOperations.length > 0 && (
               <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden">
                 <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50">
-                  <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                  <p className="text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wider">
                     Active Document AI Operations
                   </p>
                 </div>
@@ -546,7 +546,7 @@ function OcrRequestsTab({ addError }: { addError: (m: string) => void }) {
             {status.processingCases.length > 0 && (
               <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden">
                 <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50">
-                  <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                  <p className="text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wider">
                     Cases Currently Processing
                   </p>
                 </div>
@@ -570,10 +570,10 @@ function OcrRequestsTab({ addError }: { addError: (m: string) => void }) {
       {/* ── Cancel section ── */}
       <div className="space-y-3">
         <div>
-          <h2 className="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-1">
+          <h2 className="text-sm font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-widest mb-1">
             Cancel All Document AI Requests
           </h2>
-          <p className="text-sm text-slate-500 dark:text-slate-400">
+          <p className="text-sm text-slate-600 dark:text-slate-400">
             Sends a cancel command to every active DocAI batch processing job in this project and reverts any processing cases back to draft status.
             Use this to free up quota when requests are stuck or blocking new uploads.
           </p>
@@ -655,7 +655,7 @@ function PreflightTab({ addError }: { addError: (m: string) => void }) {
       {/* Preflight section */}
       <div>
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-widest">Pre-flight Check</h2>
+          <h2 className="text-sm font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-widest">Pre-flight Check</h2>
           <button onClick={runPreflight} disabled={runningPreflight}
             className="flex items-center gap-1.5 text-xs text-indigo-600 dark:text-indigo-400 hover:underline disabled:opacity-50">
             <RefreshCw className={cn('w-3.5 h-3.5', runningPreflight && 'animate-spin')} /> Re-run
@@ -668,7 +668,7 @@ function PreflightTab({ addError }: { addError: (m: string) => void }) {
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden">
             <div className={cn('px-4 py-3 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between', preflight.allValid ? 'bg-emerald-50 dark:bg-emerald-950/20' : 'bg-rose-50 dark:bg-rose-950/20')}>
               <span className="text-sm font-semibold">{preflight.allValid ? '✓ All checks passed' : '✗ Some checks failed'}</span>
-              <span className="text-xs text-slate-400">{formatDate(preflight.checkedAt)}</span>
+              <span className="text-xs text-slate-500">{formatDate(preflight.checkedAt)}</span>
             </div>
             <div className="divide-y divide-slate-100 dark:divide-slate-800">
               {preflight.checks.map((c: any, i: number) => (
@@ -687,11 +687,11 @@ function PreflightTab({ addError }: { addError: (m: string) => void }) {
 
       {/* Recent logs section */}
       <div>
-        <h2 className="text-sm font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-3">Recent Case Runs (Last 10)</h2>
+        <h2 className="text-sm font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-widest mb-3">Recent Case Runs (Last 10)</h2>
         {logsLoading ? (
           <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 text-indigo-500 animate-spin" /></div>
         ) : recentLogs.length === 0 ? (
-          <div className="text-center py-8 text-sm text-slate-400">No pipeline runs recorded yet.</div>
+          <div className="text-center py-8 text-sm text-slate-500">No pipeline runs recorded yet.</div>
         ) : (
           <div className="space-y-2">
             {recentLogs.map((log: any, i: number) => (
@@ -704,7 +704,7 @@ function PreflightTab({ addError }: { addError: (m: string) => void }) {
                     {log.status}
                   </span>
                 </div>
-                <div className="text-xs text-slate-400">{formatDate(log.startedAt)}</div>
+                <div className="text-xs text-slate-500">{formatDate(log.startedAt)}</div>
                 {log.errorMessage && <div className="text-xs text-rose-500 mt-1">{log.errorMessage}</div>}
               </div>
             ))}

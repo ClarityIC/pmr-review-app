@@ -62,6 +62,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
   // Table collapse
   const [t1Collapsed, setT1Collapsed] = useState(false);
   const [t2Collapsed, setT2Collapsed] = useState(false);
+  const [compiledFromOpen, setCompiledFromOpen] = useState(false);
 
   // Column resize
   const [t1ColWidths, setT1ColWidths] = useState<Record<string, number>>({});
@@ -81,6 +82,9 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
   const [showPdfPane, setShowPdfPane] = useState(true);
   const [pdfLoading, setPdfLoading] = useState(false);
   const [pdfPaneWidth, setPdfPaneWidth] = useState(420);
+  const [pdfRetryKey, setPdfRetryKey] = useState(0);
+  const [pdfContainerWidth, setPdfContainerWidth] = useState(380);
+  const pdfContentRef = useRef<HTMLDivElement>(null);
   const isResizingRef = useRef(false);
 
   // ── Load case ──────────────────────────────────────────────────────────────
@@ -286,6 +290,17 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
     setPdfUrl(`/api/cases/${id}/pdf/${fileId}`);
   }, [id]);
 
+  // ── PDF container resize observer ────────────────────────────────────────
+  useEffect(() => {
+    const el = pdfContentRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => {
+      setPdfContainerWidth(entry.contentRect.width);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [showPdfPane, pdfUrl]);
+
   // ── Citation link handler: "FileName.pdf (Page 5)" → opens viewer ─────────
   const handleCitationClick = useCallback((citation: string) => {
     if (!caseData?.files?.length) return;
@@ -408,24 +423,27 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
       </AnimatePresence>
 
       {/* Page header — sticky below navbar */}
-      <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-6 py-3 flex items-center gap-4 sticky top-[57px] z-20">
-        <button onClick={() => navigate('/cases')} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors">
-          <ChevronLeft className="w-5 h-5" />
-        </button>
-        <div className="flex-1 min-w-0">
-          <h1 className="text-lg font-semibold text-slate-900 dark:text-slate-100 truncate">
-            {caseData.patientName}
-          </h1>
-          <p className="text-xs text-slate-500">Date of Injury: {caseData.dateOfInjury} · <StatusBadge status={caseData.status} /></p>
+      <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-6 py-3 sticky top-[57px] z-20">
+        <div className="flex items-center gap-4">
+          <button onClick={() => navigate('/cases')} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors">
+            <ChevronLeft className="w-5 h-5" />
+          </button>
+          <div className="flex-1 min-w-0">
+            <h1 className="text-lg font-semibold text-slate-900 dark:text-slate-100 truncate">
+              {caseData.patientName}
+            </h1>
+            <p className="text-xs text-slate-600 dark:text-slate-400">
+              Date of Injury: {caseData.dateOfInjury}
+              {caseData.files?.length > 0 && <> · {caseData.files.length} file{caseData.files.length !== 1 ? 's' : ''}</>}
+              {' · '}<StatusBadge status={caseData.status} />
+            </p>
+          </div>
         </div>
         {hasResults && (
-          <div className="flex items-center gap-2">
-            <a href="#table1" className="text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 px-2 py-1 rounded-md hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors">T1: MedChron</a>
-            <a href="#table2" className="text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 px-2 py-1 rounded-md hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors">T2: Conditions</a>
+          <div className="flex items-center gap-1 mt-2 ml-9">
+            <a href="#table1" className="text-sm font-semibold text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 px-3 py-1.5 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors">T1: MedChron</a>
+            <a href="#table2" className="text-sm font-semibold text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 px-3 py-1.5 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors">T2: Conditions</a>
           </div>
-        )}
-        {caseData.files?.length > 0 && (
-          <span className="text-xs text-slate-400">{caseData.files.length} file{caseData.files.length !== 1 ? 's' : ''}</span>
         )}
       </div>
 
@@ -510,7 +528,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                         <FileText className="w-4 h-4 text-slate-400 shrink-0" />
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium text-slate-800 dark:text-slate-200 truncate">{f.name}</p>
-                          <p className="text-xs text-slate-400">{formatBytes(f.size)}</p>
+                          <p className="text-xs text-slate-500">{formatBytes(f.size)}</p>
                         </div>
                       </li>
                     ))}
@@ -541,7 +559,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                         <FileText className="w-4 h-4 text-slate-400 shrink-0" />
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium text-slate-800 dark:text-slate-200 truncate">{f.name}</p>
-                          <p className="text-xs text-slate-400">{formatBytes(f.size)}</p>
+                          <p className="text-xs text-slate-500">{formatBytes(f.size)}</p>
                         </div>
                         <button
                           onClick={() => setPendingFiles(prev => prev.filter((_, i) => i !== idx))}
@@ -583,7 +601,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                       <FileText className="w-4 h-4 text-slate-400 shrink-0" />
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-slate-800 dark:text-slate-200 truncate">{f.name}</p>
-                        <p className="text-xs text-slate-400">{formatBytes(f.size)}</p>
+                        <p className="text-xs text-slate-500">{formatBytes(f.size)}</p>
                       </div>
                       <button onClick={() => setPendingFiles(prev => prev.filter((_, i) => i !== idx))} className="p-1 text-slate-300 hover:text-rose-500 transition-colors"><X className="w-4 h-4" /></button>
                     </li>
@@ -610,7 +628,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                   let ts = '';
                   try { ts = new Date(last.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }); } catch { ts = last.timestamp; }
                   return (
-                    <p className="text-xs font-mono text-slate-400 dark:text-slate-500 mt-2 text-center">
+                    <p className="text-xs font-mono text-slate-500 dark:text-slate-500 mt-2 text-center">
                       {ts} — {last.message}
                     </p>
                   );
@@ -644,13 +662,30 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
           {/* ── Source files + compilation timestamp ── */}
           {hasResults && caseData.files?.length > 0 && (
             <div className="px-6 pt-6 pb-2">
-              <div className="text-xs text-slate-500 dark:text-slate-400 space-y-0.5">
-                <p className="font-medium">Compiled from:</p>
-                {caseData.files.map((f: any, i: number) => (
-                  <p key={i} className="pl-3">{f.name}</p>
-                ))}
-                {caseData.updatedAt && (
-                  <p className="pt-1">Generated: {new Date(caseData.updatedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })}</p>
+              <div className="bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden">
+                <button
+                  onClick={() => setCompiledFromOpen(v => !v)}
+                  className="w-full flex items-center justify-between px-4 py-3 text-xs hover:bg-slate-100 dark:hover:bg-slate-700/40 transition-colors"
+                >
+                  <div className="flex items-center gap-2">
+                    <ChevronRight className={cn('w-3.5 h-3.5 text-slate-400 transition-transform', compiledFromOpen && 'rotate-90')} />
+                    <span className="font-semibold text-slate-700 dark:text-slate-300">Compiled From</span>
+                    <span className="text-slate-500 dark:text-slate-400">{caseData.files.length} file{caseData.files.length !== 1 ? 's' : ''}</span>
+                  </div>
+                  {caseData.updatedAt && (
+                    <span className="text-slate-600 dark:text-slate-400">
+                      Generated {new Date(caseData.updatedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })}
+                    </span>
+                  )}
+                </button>
+                {compiledFromOpen && (
+                  <div className="px-4 pb-3 pt-0 border-t border-slate-200 dark:border-slate-700">
+                    <ul className="mt-2 space-y-1">
+                      {caseData.files.map((f: any, i: number) => (
+                        <li key={i} className="text-xs text-slate-600 dark:text-slate-400 pl-5">• {f.name}</li>
+                      ))}
+                    </ul>
+                  </div>
                 )}
               </div>
             </div>
@@ -665,7 +700,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
               >
                 <ChevronRight className={cn('w-4 h-4 text-slate-400 transition-transform', !t1Collapsed && 'rotate-90')} />
                 <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
-                  Table 1: Medical Chronology <span className="text-slate-400 font-normal">({caseData.table1.length} records)</span>
+                  Table 1: Medical Chronology <span className="text-slate-500 font-normal">({caseData.table1.length} records)</span>
                 </h2>
               </button>
               <div className="flex items-center gap-3 mb-2">
@@ -680,11 +715,11 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                 )}
                 <div className="flex-1" />
                 {caseData.status === 'complete' && (
-                  <button onClick={() => setRegenerateTarget('table1')} className="flex items-center gap-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 px-3 py-1.5 rounded-lg transition-colors shadow-sm">
+                  <button onClick={() => setRegenerateTarget('table1')} className="flex items-center gap-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-lg transition-colors shadow-sm">
                     <RotateCcw className="w-3.5 h-3.5" /> Regenerate Table...
                   </button>
                 )}
-                <button onClick={() => downloadXlsx('table1')} className="flex items-center gap-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 px-3 py-1.5 rounded-lg transition-colors shadow-sm">
+                <button onClick={() => downloadXlsx('table1')} className="flex items-center gap-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-lg transition-colors shadow-sm">
                   <Download className="w-3.5 h-3.5" /> Download for Excel
                 </button>
               </div>
@@ -700,7 +735,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                   }}
                 >
                   <table className="w-full text-sm text-left min-w-[900px]">
-                    <thead className="bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 text-xs font-medium uppercase tracking-wider border-b border-slate-200 dark:border-slate-700 sticky top-0 z-10">
+                    <thead className="bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-400 text-xs font-medium uppercase tracking-wider border-b border-slate-200 dark:border-slate-700 sticky top-0 z-10">
                       <tr>
                         {t1Keys.map(key => (
                           <SortableFilterableHeader
@@ -759,7 +794,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
               >
                 <ChevronRight className={cn('w-4 h-4 text-slate-400 transition-transform', !t2Collapsed && 'rotate-90')} />
                 <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
-                  Table 2: Patient Conditions <span className="text-slate-400 font-normal">({caseData.table2.length} conditions)</span>
+                  Table 2: Patient Conditions <span className="text-slate-500 font-normal">({caseData.table2.length} conditions)</span>
                 </h2>
               </button>
               <div className="flex items-center gap-3 mb-2">
@@ -774,11 +809,11 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                 )}
                 <div className="flex-1" />
                 {caseData.status === 'complete' && (
-                  <button onClick={() => setRegenerateTarget('table2')} className="flex items-center gap-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 px-3 py-1.5 rounded-lg transition-colors shadow-sm">
+                  <button onClick={() => setRegenerateTarget('table2')} className="flex items-center gap-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-lg transition-colors shadow-sm">
                     <RotateCcw className="w-3.5 h-3.5" /> Regenerate Table...
                   </button>
                 )}
-                <button onClick={() => downloadXlsx('table2')} className="flex items-center gap-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 px-3 py-1.5 rounded-lg transition-colors shadow-sm">
+                <button onClick={() => downloadXlsx('table2')} className="flex items-center gap-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-lg transition-colors shadow-sm">
                   <Download className="w-3.5 h-3.5" /> Download for Excel
                 </button>
               </div>
@@ -794,7 +829,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                   }}
                 >
                   <table className="w-full text-sm text-left min-w-[900px]">
-                    <thead className="bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 text-xs font-medium uppercase tracking-wider border-b border-slate-200 dark:border-slate-700 sticky top-0 z-10">
+                    <thead className="bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-400 text-xs font-medium uppercase tracking-wider border-b border-slate-200 dark:border-slate-700 sticky top-0 z-10">
                       <tr>
                         {t2Keys.map(key => (
                           <SortableFilterableHeader
@@ -880,7 +915,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                     <button onClick={() => setPageNum(p => Math.max(1, p - 1))} disabled={pageNum <= 1} className="p-1 text-slate-400 hover:text-slate-700 disabled:opacity-30 transition-colors">
                       <ChevronLeft className="w-4 h-4" />
                     </button>
-                    <span className="text-xs text-slate-500 tabular-nums w-16 text-center">
+                    <span className="text-xs text-slate-600 dark:text-slate-400 tabular-nums w-16 text-center">
                       {pageNum} / {numPages || '?'}
                     </span>
                     <button onClick={() => setPageNum(p => Math.min(numPages, p + 1))} disabled={pageNum >= numPages} className="p-1 text-slate-400 hover:text-slate-700 disabled:opacity-30 transition-colors">
@@ -897,7 +932,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                     <button onClick={() => setPdfScale(s => Math.max(0.5, s - 0.15))} className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors" title="Zoom out">
                       <ZoomOut className="w-3.5 h-3.5" />
                     </button>
-                    <button onClick={() => setPdfScale(1.0)} className="text-[10px] text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 px-1.5 py-0.5 rounded transition-colors tabular-nums" title="Reset zoom">
+                    <button onClick={() => setPdfScale(1.0)} className="text-xs text-slate-600 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 px-1.5 py-0.5 rounded transition-colors tabular-nums" title="Reset zoom">
                       {Math.round(pdfScale * 100)}%
                     </button>
                     <button onClick={() => setPdfScale(s => Math.min(3, s + 0.15))} className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors" title="Zoom in">
@@ -905,7 +940,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                     </button>
                   </div>
                   {pdfUrl && (
-                    <a href={pdfUrl} download={pdfName} className="flex items-center gap-1 text-[10px] text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors" title="Download PDF">
+                    <a href={pdfUrl} download={pdfName} className="flex items-center gap-1 text-xs text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors" title="Download PDF">
                       <Download className="w-3.5 h-3.5" /> Download
                     </a>
                   )}
@@ -913,17 +948,30 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
               </div>
 
               {/* PDF content */}
-              <div className="flex-1 overflow-auto flex justify-center bg-slate-100 dark:bg-slate-800 p-2">
+              <div ref={pdfContentRef} className="flex-1 overflow-auto flex justify-center bg-slate-100 dark:bg-slate-800 p-2">
                 {pdfLoading ? (
                   <div className="flex items-center justify-center w-full"><Loader2 className="w-6 h-6 text-indigo-500 animate-spin" /></div>
                 ) : (
                   <Document
+                    key={pdfRetryKey}
                     file={pdfUrl}
                     onLoadSuccess={({ numPages }) => setNumPages(numPages)}
                     loading={<Loader2 className="w-6 h-6 text-indigo-500 animate-spin mt-8" />}
-                    error={<p className="text-sm text-rose-500 p-4">Failed to load PDF.</p>}
+                    error={
+                      <div className="flex flex-col items-center justify-center h-full gap-3 p-6 mt-12">
+                        <AlertCircle className="w-10 h-10 text-slate-400" />
+                        <p className="text-sm font-medium text-slate-700 dark:text-slate-300">Unable to load PDF</p>
+                        <p className="text-xs text-slate-500 dark:text-slate-400 text-center max-w-48">The file may still be uploading, or there was a network error.</p>
+                        <button
+                          onClick={() => setPdfRetryKey(k => k + 1)}
+                          className="mt-1 flex items-center gap-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-lg transition-colors shadow-sm"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" /> Retry
+                        </button>
+                      </div>
+                    }
                   >
-                    <Page pageNumber={pageNum} width={380 * pdfScale} renderAnnotationLayer renderTextLayer />
+                    <Page pageNumber={pageNum} width={Math.max(200, (pdfContainerWidth - 16)) * pdfScale} renderAnnotationLayer renderTextLayer />
                   </Document>
                 )}
               </div>

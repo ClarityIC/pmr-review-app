@@ -56,12 +56,12 @@ export default function LogDrawer({ logs, isOpen, onToggle }: Props) {
       {isOpen && (
         <div className="h-56 overflow-y-auto bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800">
           {logs.length === 0 ? (
-            <p className="font-mono text-xs text-slate-400 px-5 py-4">Waiting for processing to start…</p>
+            <p className="font-mono text-xs text-slate-500 px-5 py-4">Waiting for processing to start…</p>
           ) : (
             <div className="font-mono">
               {logs.map((entry, i) => (
                 <div key={i} className="flex items-start gap-2 px-5 py-1">
-                  <span className="text-[10px] text-slate-400 shrink-0 tabular-nums mt-px">
+                  <span className="text-[10px] text-slate-500 shrink-0 tabular-nums mt-px">
                     {formatTime(entry.timestamp)}
                   </span>
                   <div className={cn('mt-1.5 w-1.5 h-1.5 rounded-full shrink-0', LEVEL_DOT[entry.level])} />
