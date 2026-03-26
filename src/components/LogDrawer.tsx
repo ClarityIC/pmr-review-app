@@ -43,7 +43,7 @@ export default function LogDrawer({ logs, isOpen, onToggle }: Props) {
       >
         <div className="flex items-center gap-2.5">
           <Activity className="w-4 h-4 text-slate-400" />
-          <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Processing Progress</span>
+          <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Processing Log</span>
           {logs.length > 0 && (
             <span className="bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 text-xs px-2 py-0.5 rounded-full">
               {logs.length}
@@ -56,7 +56,7 @@ export default function LogDrawer({ logs, isOpen, onToggle }: Props) {
       {isOpen && (
         <div className="h-56 overflow-y-auto bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800">
           {logs.length === 0 ? (
-            <p className="font-mono text-xs text-slate-500 px-5 py-4">Waiting for processing to start…</p>
+            <p className="font-mono text-xs text-slate-500 px-5 py-4">No log entries yet.</p>
           ) : (
             <div className="font-mono">
               {logs.map((entry, i) => (

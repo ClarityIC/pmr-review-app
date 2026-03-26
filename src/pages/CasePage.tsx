@@ -50,7 +50,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
 
   // SSE log stream
   const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [logDrawerOpen, setLogDrawerOpen] = useState(true);
+  const [logDrawerOpen, setLogDrawerOpen] = useState(false);
   const sseRef = useRef<EventSource | null>(null);
 
   // Tables
@@ -95,6 +95,13 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
       if (!res.ok) { navigate('/cases'); return; }
       const data = await res.json();
       setCaseData(data.case);
+      // Seed log drawer with persisted processing logs (if any) on initial load
+      if (data.case.processingLogs?.length) {
+        setLogs(prev => {
+          if (prev.length > 0) return prev; // don't overwrite live SSE logs
+          return data.case.processingLogs.map(({ seq, ...rest }: any) => rest);
+        });
+      }
     } catch (e) { console.error('[case/load]', e); addError("Couldn't load this case — please refresh the page."); }
     finally { setLoading(false); }
   }, [id]);
@@ -172,7 +179,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
   const handleUpload = async (files: File[]) => {
     if (!files.length) return;
     setUploading(true);
-    setLogs([]);
+    seenLogsRef.current.clear(); // reset dedup so new SSE entries aren't skipped
     setLogDrawerOpen(true);
 
     try {
@@ -244,7 +251,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
 
   const handleReprocess = async () => {
     setReprocessing(true);
-    setLogs([]);
+    seenLogsRef.current.clear(); // reset dedup so new SSE entries aren't skipped
     setLogDrawerOpen(true);
     try {
       const res = await fetch(`/api/cases/${id}/reprocess`, { method: 'POST' });
@@ -671,9 +678,9 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                   {!isProcessing && pendingFiles.length === 0 && (
                     <button
                       onClick={() => fileInputRef.current?.click()}
-                      className="flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors shadow-sm shrink-0"
+                      className="flex items-center gap-2 px-4 py-2 text-xs font-semibold text-indigo-600 border border-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded-lg transition-colors shrink-0"
                     >
-                      <ArrowUp className="w-3.5 h-3.5" /> Upload more files
+                      <ArrowUp className="w-3.5 h-3.5" /> Upload More Files
                     </button>
                   )}
                 </div>
@@ -749,7 +756,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                                   const th = (e.target as HTMLElement).closest('th');
                                   startResize(key, e.clientX, th?.offsetWidth || 120, setT1ColWidths);
                                 }}
-                                className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-indigo-400/50"
+                                className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-indigo-400/50"
                               />
                             }
                           />
@@ -851,7 +858,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                                   const th = (e.target as HTMLElement).closest('th');
                                   startResize(key, e.clientX, th?.offsetWidth || 120, setT2ColWidths);
                                 }}
-                                className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-indigo-400/50"
+                                className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-indigo-400/50"
                               />
                             }
                           />
