@@ -25,7 +25,7 @@ import {
 } from './server/cases.js';
 import { signedWriteUrl, getBucketUsageBytes, listObjects, deletePrefix, deleteObject, downloadFile, BUCKET_AUTH, BUCKET_STAGING, BUCKET_OUTPUT } from './server/gcs.js';
 import { deleteCaseRows, deleteOrphanRows } from './server/bigquery.js';
-import { runPipeline, cancelPipeline, getActiveLRONames, getPersistedLRONames, FileInput } from './server/pipeline/orchestrator.js';
+import { runPipeline, resumePipeline, cancelPipeline, getActiveLRONames, getPersistedLRONames, FileInput } from './server/pipeline/orchestrator.js';
 import { regenerateTable } from './server/pipeline/regenerate.js';
 import { runPreflight } from './server/preflight.js';
 import { DEFAULT_TABLE1_PROMPT, DEFAULT_TABLE2_PROMPT } from './server/pipeline/prompts.js';
@@ -58,88 +58,65 @@ function cleanupStaleFiles(dir: string, maxAgeMs = 2 * 60 * 60 * 1000) {
 cleanupStaleFiles(UPLOAD_DIR);
 cleanupStaleFiles(path.join(process.cwd(), 'chunks'));
 
-// ── Startup recovery: reset any cases stuck in 'processing' from a dead instance ──
-// The pipeline runs as a background async task. If Cloud Run kills the instance
-// mid-run (scale-down, restart, deploy), any case still marked 'processing' is
-// orphaned — the pipeline will never complete. Reset them to 'error' so users
-// can retry via the Retry Processing button. Append detailed log entries so the
-// user can see what was in progress and what was skipped.
+// ── Startup recovery: resume or reset stuck cases from a dead instance ──────
+// If a case has a pipelineCheckpoint with step1Complete, we can resume from
+// where it left off. Otherwise, mark as error (user must manually retry).
 setImmediate(async () => {
   try {
     const { listCases: _list, updateCase: _update } = await import('./server/cases.js');
-    const { getFirestore: _getFs } = await import('./server/config.js');
-    const { FieldValue } = await import('@google-cloud/firestore');
+    const { getDocAI: _getDocAI } = await import('./server/config.js');
+    const { getPersistedLRONames: _getPersistedLROs } = await import('./server/pipeline/orchestrator.js');
     const cases = await _list();
     const stuck = cases.filter(c => c.status === 'processing' || c.regeneratingTable);
     if (stuck.length === 0) return;
-    console.log(`[startup] Resetting ${stuck.length} stuck processing case(s) to error`);
+    console.log(`[startup] Found ${stuck.length} stuck case(s) — checking for resumability`);
 
-    // Cancel any persisted DocAI LROs that were running before the restart
-    try {
-      const { getDocAI: _getDocAI } = await import('./server/config.js');
-      const { getPersistedLRONames: _getPersistedLROs } = await import('./server/pipeline/orchestrator.js');
-      const docai = _getDocAI();
-      for (const c of stuck) {
-        const lros = await _getPersistedLROs(c.id);
-        if (lros.length > 0) {
-          await Promise.all(lros.map(name =>
-            (docai.operationsClient as any).cancelOperation({ name }).catch(() => {}),
-          ));
-          console.log(`[startup] Cancelled ${lros.length} persisted LRO(s) for case ${c.id}`);
-        }
+    for (const c of stuck) {
+      // Regeneration interruption — just clear the lock
+      if (c.regeneratingTable) {
+        await _update(c.id, { regeneratingTable: null });
+        console.log(`[startup] Case ${c.id}: cleared stale regeneratingTable lock`);
+        continue;
       }
-    } catch (e) {
-      console.error('[startup] Failed to cancel persisted LROs:', e);
-    }
 
-    const fs = _getFs();
-    const now = new Date().toISOString();
+      const cp = (c as any).pipelineCheckpoint;
 
-    await Promise.all(
-      stuck.map(async (c) => {
-        const wasRegenerating = !!c.regeneratingTable;
-        const existingLogs: any[] = c.processingLogs || [];
-        const lastLog = existingLogs.length > 0
-          ? existingLogs[existingLogs.length - 1]
-          : null;
-        const lastMsg = lastLog?.message || '(no log entries)';
-        const lastTime = lastLog?.timestamp || 'unknown';
-
-        const errorEntries = [
-          { level: 'error', message: `Server restarted while ${wasRegenerating ? `regenerating ${c.regeneratingTable}` : 'processing'}. The pipeline was interrupted and did not complete.`, timestamp: now, seq: (lastLog?.seq ?? 0) + 1 },
-          { level: 'error', message: `Last activity before restart: "${lastMsg}" at ${lastTime}`, timestamp: now, seq: (lastLog?.seq ?? 0) + 2 },
-        ];
-
-        // For multi-file runs, figure out which files were completed vs skipped
-        if (!wasRegenerating && c.files?.length > 0) {
-          const registeredFileNames = new Set(c.files.map((f: any) => f.name));
-          // The pipeline registers each file in Firestore after Step 1 completes.
-          // Files that were uploaded but never registered were never processed.
-          // We can't know the full upload manifest from here, but we can note
-          // how many files were registered vs total if the case has file metadata.
-          errorEntries.push({
-            level: 'info',
-            message: `${c.files.length} file(s) were registered before the interruption: ${[...registeredFileNames].join(', ')}`,
-            timestamp: now,
-            seq: (lastLog?.seq ?? 0) + 3,
-          });
-        }
-
-        const patch: Record<string, any> = wasRegenerating
-          ? { regeneratingTable: null }
-          : { status: 'error' as const, errorMessage: `Processing was interrupted when the server restarted (last step: "${lastMsg}"). Use the "Retry Processing" button to reprocess.` };
-
+      // No checkpoint or Step 1 incomplete → cannot resume
+      if (!cp || !cp.step1Complete) {
+        // Cancel any persisted LROs before marking as error
         try {
-          await _update(c.id, patch);
-          await fs.collection('cases').doc(c.id).update({
-            processingLogs: FieldValue.arrayUnion(...errorEntries),
-            activeLRONames: [],  // clear persisted LROs
-          });
+          const lros = await _getPersistedLROs(c.id);
+          if (lros.length > 0) {
+            const docai = _getDocAI();
+            await Promise.all(lros.map((name: string) =>
+              (docai.operationsClient as any).cancelOperation({ name }).catch(() => {}),
+            ));
+          }
         } catch {}
-      }),
-    );
+
+        const reason = cp
+          ? 'Processing interrupted during file upload/chunking.'
+          : 'Processing interrupted before any step completed.';
+        await _update(c.id, {
+          status: 'error' as const,
+          errorMessage: `${reason} Use "Retry Processing" to reprocess.`,
+        });
+        console.log(`[startup] Case ${c.id}: not resumable — marked as error`);
+        continue;
+      }
+
+      // Step 1 complete → resume pipeline from checkpoint
+      console.log(`[startup] Case ${c.id}: resuming pipeline (step1=${cp.step1Complete}, step2=${cp.step2Complete}, step3=${cp.step3Complete})`);
+      resumePipeline(c.id).catch(async (e: any) => {
+        console.error(`[startup] Resume failed for case ${c.id}:`, e);
+        await _update(c.id, {
+          status: 'error' as const,
+          errorMessage: `Resume after restart failed: ${e.message}. Use "Retry Processing" to reprocess.`,
+        }).catch(() => {});
+      });
+    }
   } catch (e) {
-    console.error('[startup] Failed to reset stuck cases:', e);
+    console.error('[startup] Failed to check stuck cases:', e);
   }
 });
 

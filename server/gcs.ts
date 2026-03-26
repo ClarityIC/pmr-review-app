@@ -79,6 +79,47 @@ export async function getBucketUsageBytes(bucket: string): Promise<number> {
   }
 }
 
+/**
+ * Reconstruct ChunkRef[] from GCS staging bucket listing.
+ * Used for pipeline resume after server restart — step1 metadata is in-memory only,
+ * but chunk filenames follow a deterministic pattern: chunk_NNNN_pages_X-Y.pdf
+ */
+export async function listChunkRefs(caseId: string, fileId: string): Promise<Array<{
+  chunkId: string;
+  chunkIndex: number;
+  absolutePageOffset: number;
+  pageCount: number;
+  gcsUri: string;
+}>> {
+  const bucket = BUCKET_STAGING();
+  const prefix = `cases/${caseId}/${fileId}/chunks/`;
+  const [files] = await getStorage().bucket(bucket).getFiles({ prefix });
+
+  const chunks = files
+    .filter(f => f.name.endsWith('.pdf'))
+    .map(f => {
+      const match = f.name.match(/chunk_(\d+)_pages_(\d+)-(\d+)\.pdf$/);
+      if (!match) return null;
+      const chunkIndex = parseInt(match[1], 10);
+      const pageStart = parseInt(match[2], 10);
+      const pageEnd = parseInt(match[3], 10);
+      return {
+        chunkId: `recovered-${caseId}-${fileId}-${chunkIndex}`,
+        chunkIndex,
+        absolutePageOffset: pageStart - 1, // 0-based
+        pageCount: pageEnd - pageStart + 1,
+        gcsUri: `gs://${bucket}/${f.name}`,
+      };
+    })
+    .filter(Boolean) as Array<{
+      chunkId: string; chunkIndex: number; absolutePageOffset: number;
+      pageCount: number; gcsUri: string;
+    }>;
+
+  chunks.sort((a, b) => a.chunkIndex - b.chunkIndex);
+  return chunks;
+}
+
 /** List all objects in a bucket prefix with metadata. */
 export async function listObjects(bucket: string, prefix?: string) {
   const [files] = await getStorage().bucket(bucket).getFiles(prefix ? { prefix } : {});

@@ -56,6 +56,18 @@ export interface CaseRecord {
   // Per-run processing log (persisted for cross-instance SSE replay)
   processingLogs?: Array<{ level: string; message: string; timestamp: string; seq: number }>;
   totalPages?: number;
+  // Pipeline checkpoint for resume-on-restart (persisted after each step boundary)
+  pipelineCheckpoint?: PipelineCheckpoint | null;
+}
+
+export interface PipelineCheckpoint {
+  processingPath: 'path1-sync' | 'path2-async';
+  totalPages: number;
+  step1Complete: boolean;
+  step2Complete: boolean;
+  step3Complete: boolean;
+  ocrOutputPrefix?: string;    // Path 2 only
+  layoutOutputPrefix?: string; // Path 2 only
 }
 
 const COLLECTION = 'cases';

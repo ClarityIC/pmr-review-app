@@ -15,13 +15,15 @@ import { PDFDocument } from 'pdf-lib';
 import { FieldValue } from '@google-cloud/firestore';
 import { step1 } from './step1-chunk.js';
 import type { ProcessingPath } from './step1-chunk.js';
-import { step2 } from './step2-docai.js';
+import { step2, pollLRO } from './step2-docai.js';
+import type { DocAIResult } from './step2-docai.js';
 import { step3 } from './step3-reassemble.js';
 import { step4 } from './step4-table1.js';
 import { step5 } from './step5-table2.js';
 import { updateCase, addFileToCase, getCase, TableVersion } from '../cases.js';
+import type { PipelineCheckpoint } from '../cases.js';
 import { getFirestore, getDocAI } from '../config.js';
-import { BUCKET_AUTH, BUCKET_OUTPUT, deletePrefix } from '../gcs.js';
+import { BUCKET_AUTH, BUCKET_OUTPUT, deletePrefix, listChunkRefs } from '../gcs.js';
 import { ensureTable0Exists, deleteCaseRows } from '../bigquery.js';
 
 export type LogLevel = 'info' | 'success' | 'error' | 'warn';
@@ -82,6 +84,14 @@ export async function getPersistedLRONames(caseId: string): Promise<string[]> {
  * Safe to call even if no pipeline is running. Falls back to Firestore
  * if the in-memory map is empty (e.g. after a server restart).
  */
+/** Persist pipeline checkpoint to Firestore so the pipeline can resume after server restart. */
+async function writeCheckpoint(caseId: string, cp: PipelineCheckpoint): Promise<void> {
+  try {
+    await getFirestore().collection('cases').doc(caseId)
+      .update({ pipelineCheckpoint: cp });
+  } catch {}
+}
+
 export async function cancelPipeline(caseId: string): Promise<void> {
   cancelledRuns.add(caseId);
   let lros = activeLRONames.get(caseId) || [];
@@ -103,6 +113,11 @@ export async function cancelPipeline(caseId: string): Promise<void> {
   }
 
   await clearPersistedLRONames(caseId);
+  // Clear checkpoint — user explicitly cancelled, don't resume on restart
+  try {
+    await getFirestore().collection('cases').doc(caseId)
+      .update({ pipelineCheckpoint: null });
+  } catch {}
 }
 
 export function emitLog(caseId: string, level: LogLevel, message: string) {
@@ -197,6 +212,13 @@ export async function runPipeline(opts: RunOptions): Promise<void> {
         : 'Path 2 (async LRO)'}`,
     );
 
+    // Write initial checkpoint so resume-on-restart knows the processing path
+    const checkpoint: PipelineCheckpoint = {
+      processingPath, totalPages,
+      step1Complete: false, step2Complete: false, step3Complete: false,
+    };
+    await writeCheckpoint(caseId, checkpoint);
+
     // ── Steps 1–3: Per-file ingestion ─────────────────────────────────────────
 
     if (processingPath === 'path2-async') {
@@ -228,6 +250,10 @@ export async function runPipeline(opts: RunOptions): Promise<void> {
         pendingCleanup.delete(localFilePath);
       }
 
+      // All files chunked and registered — checkpoint Step 1 complete
+      checkpoint.step1Complete = true;
+      await writeCheckpoint(caseId, checkpoint);
+
       // Phase B: single batched step2 with all chunks from all files
       currentStep = 'Step 2 (Document AI processing)';
       if (isCancelled()) throw new Error('Processing was cancelled.');
@@ -237,6 +263,14 @@ export async function runPipeline(opts: RunOptions): Promise<void> {
         isCancelled,
         onLROsStarted: (names) => { activeLRONames.set(caseId, names); persistLRONames(caseId, names); },
       });
+
+      // Checkpoint Step 2 complete — store output prefixes for resume
+      checkpoint.step2Complete = true;
+      if (step2Result.path === 'path2-async') {
+        checkpoint.ocrOutputPrefix = step2Result.ocrOutputPrefix;
+        checkpoint.layoutOutputPrefix = step2Result.layoutOutputPrefix;
+      }
+      await writeCheckpoint(caseId, checkpoint);
 
       // Phase C: per-file step3 (skip output scrubbing — orchestrator handles it)
       for (let i = 0; i < fileResults.length; i++) {
@@ -255,6 +289,10 @@ export async function runPipeline(opts: RunOptions): Promise<void> {
           deletePrefix(BUCKET_OUTPUT(), step2Result.layoutOutputPrefix),
         ]);
       }
+
+      // Checkpoint Step 3 complete
+      checkpoint.step3Complete = true;
+      await writeCheckpoint(caseId, checkpoint);
 
     } else {
       // ── Path 1: per-file sequential (sync processDocument, no LROs) ───────
@@ -276,6 +314,12 @@ export async function runPipeline(opts: RunOptions): Promise<void> {
           uploadedAt: new Date().toISOString(),
         });
 
+        // Mark step1 complete after last file is registered
+        if (i === files.length - 1) {
+          checkpoint.step1Complete = true;
+          await writeCheckpoint(caseId, checkpoint);
+        }
+
         currentStep = 'Step 2 (Document AI processing)';
         if (isCancelled()) throw new Error('Processing was cancelled.');
         const step2Result = await step2(step1Result.chunks, caseId, processingPath, log, {
@@ -290,6 +334,12 @@ export async function runPipeline(opts: RunOptions): Promise<void> {
         try { unlinkSync(localFilePath); } catch {}
         pendingCleanup.delete(localFilePath);
       }
+
+      // All files complete through step 3 for Path 1
+      checkpoint.step1Complete = true;
+      checkpoint.step2Complete = true;
+      checkpoint.step3Complete = true;
+      await writeCheckpoint(caseId, checkpoint);
     }
 
     // ── Step 4: Table 1 generation (whole case) ───────────────────────────────
@@ -339,7 +389,8 @@ export async function runPipeline(opts: RunOptions): Promise<void> {
       table2ActiveVersion: 0,
       dateProcessed: now,
       totalPages,
-    });
+      pipelineCheckpoint: null, // clear — pipeline complete
+    } as any);
 
     log('success', `Pipeline complete! Table 1: ${table1Rows.length} records, Table 2: ${table2Rows.length} conditions`);
 
@@ -370,12 +421,266 @@ export async function runPipeline(opts: RunOptions): Promise<void> {
     }
   } finally {
     activeRuns.delete(caseId);
-    cancelledRuns.delete(caseId);
     activeLRONames.delete(caseId);
-    clearPersistedLRONames(caseId);
+    // Only clear persisted LRO names if the run completed or was cancelled.
+    // On error, leave them so resume-on-restart can pick up the LROs.
+    if (!cancelledRuns.has(caseId)) {
+      // Check if we completed successfully (checkpoint cleared = complete)
+      const snap = await getFirestore().collection('cases').doc(caseId).get().catch(() => null);
+      const cp = snap?.data()?.pipelineCheckpoint;
+      if (!cp) {
+        // Pipeline completed — safe to clear LRO names
+        clearPersistedLRONames(caseId);
+      }
+      // If checkpoint still exists, pipeline errored — leave LRO names for resume
+    } else {
+      // Cancelled — LRO names already cleared in cancelPipeline()
+    }
+    cancelledRuns.delete(caseId);
     // Clean up any temp files that weren't removed inline (e.g. pipeline failed before step 3)
     for (const p of pendingCleanup) {
       try { unlinkSync(p); } catch {}
     }
+  }
+}
+
+// ── Resume pipeline after server restart ────────────────────────────────────
+
+/**
+ * Resume a pipeline that was interrupted by a server restart.
+ * Reads the pipelineCheckpoint from Firestore and picks up at the last completed step.
+ * Called from startup recovery in server.ts.
+ */
+export async function resumePipeline(caseId: string): Promise<void> {
+  if (activeRuns.has(caseId)) {
+    console.warn(`[resume] Duplicate resume ignored for case ${caseId}`);
+    return;
+  }
+  activeRuns.add(caseId);
+  cancelledRuns.delete(caseId);
+  logSeqs.delete(caseId);
+
+  // Clear old processing logs so the user sees a fresh resume stream
+  try {
+    await getFirestore().collection('cases').doc(caseId)
+      .update({ processingLogs: [] });
+  } catch {}
+
+  const log: Log = (level, message) => emitLog(caseId, level, message);
+  const isCancelled = () => cancelledRuns.has(caseId);
+  let currentStep = 'resume initialization';
+
+  try {
+    const caseData = await getCase(caseId);
+    if (!caseData) throw new Error('Case not found');
+    const cp = caseData.pipelineCheckpoint;
+    if (!cp) throw new Error('No pipeline checkpoint — cannot resume');
+    if (!cp.step1Complete) throw new Error('Step 1 incomplete — cannot resume without local files');
+
+    log('info', `Resuming pipeline after server restart (path: ${cp.processingPath}, totalPages: ${cp.totalPages})`);
+    log('info', `Checkpoint: step1=${cp.step1Complete}, step2=${cp.step2Complete}, step3=${cp.step3Complete}`);
+
+    await ensureTable0Exists();
+
+    const cancelOpts = {
+      isCancelled,
+      onLROsStarted: (names: string[]) => { activeLRONames.set(caseId, names); persistLRONames(caseId, names); },
+    };
+
+    // ── Resume Step 2 if needed ─────────────────────────────────────────────
+    if (!cp.step2Complete) {
+      currentStep = 'Step 2 (Document AI processing — resume)';
+      if (isCancelled()) throw new Error('Processing was cancelled.');
+
+      if (cp.processingPath === 'path2-async') {
+        // Check if LROs are still running or already done
+        const lroNames = await getPersistedLRONames(caseId);
+
+        if (lroNames.length > 0) {
+          log('info', `[Resume] Found ${lroNames.length} persisted LRO name(s) — checking status`);
+          const docai = getDocAI();
+
+          // Check status of each LRO
+          const statuses = await Promise.all(lroNames.map(async (name) => {
+            try {
+              const [op] = await (docai.operationsClient as any).getOperation({ name });
+              return { name, done: op.done, error: op.error, metadata: op.metadata };
+            } catch (e: any) {
+              return { name, done: false, error: { message: e.message }, metadata: null };
+            }
+          }));
+
+          const failed = statuses.filter(s => s.done && s.error);
+          if (failed.length > 0) {
+            throw new Error(`DocAI LRO failed: ${JSON.stringify(failed[0].error)}`);
+          }
+
+          const stillRunning = statuses.filter(s => !s.done);
+          if (stillRunning.length > 0) {
+            log('info', `[Resume] ${stillRunning.length} LRO(s) still running — resuming polling`);
+            await Promise.all(stillRunning.map(s => {
+              const label = s.name.includes('ocr') || lroNames.indexOf(s.name) === 0 ? 'OCR' : 'Layout';
+              return pollLRO(docai, s.name, label, log, isCancelled);
+            }));
+          }
+
+          const allDone = statuses.filter(s => s.done && !s.error);
+          if (allDone.length > 0) {
+            log('success', `[Resume] ${allDone.length} LRO(s) already completed before restart`);
+          }
+
+          log('success', '[Resume] All Document AI LROs complete');
+        } else {
+          // No LRO names — step2 was never started or LROs weren't persisted
+          // Reconstruct chunks and re-run step2
+          log('info', '[Resume] No persisted LRO names — re-running Step 2');
+          const allChunks: Array<{ chunkId: string; chunkIndex: number; absolutePageOffset: number; pageCount: number; gcsUri: string }> = [];
+          for (const file of caseData.files) {
+            const chunks = await listChunkRefs(caseId, file.id);
+            if (chunks.length === 0) throw new Error(`No staging chunks for file "${file.name}" — cannot resume`);
+            allChunks.push(...chunks);
+          }
+          const step2Result = await step2(allChunks, caseId, cp.processingPath, log, cancelOpts);
+          if (step2Result.path === 'path2-async') {
+            cp.ocrOutputPrefix = step2Result.ocrOutputPrefix;
+            cp.layoutOutputPrefix = step2Result.layoutOutputPrefix;
+          }
+        }
+
+        // Ensure output prefixes are set (from checkpoint or from deterministic path)
+        if (!cp.ocrOutputPrefix) cp.ocrOutputPrefix = `cases/${caseId}/docai-output/ocr/`;
+        if (!cp.layoutOutputPrefix) cp.layoutOutputPrefix = `cases/${caseId}/docai-output/layout/`;
+
+      } else {
+        // Path 1 sync — in-memory docs lost, re-run step2 + step3 per file
+        log('info', '[Resume] Path 1: re-running Step 2 + Step 3 from staging chunks');
+        await deleteCaseRows(caseId); // ensure idempotency
+
+        for (const file of caseData.files) {
+          if (isCancelled()) throw new Error('Processing was cancelled.');
+          const chunks = await listChunkRefs(caseId, file.id);
+          if (chunks.length === 0) throw new Error(`No staging chunks for file "${file.name}" — cannot resume`);
+
+          log('info', `[Resume] Re-processing file: ${file.name} (${chunks.length} chunk(s))`);
+          const step2Result = await step2(chunks, caseId, 'path1-sync', log, cancelOpts);
+          await step3(chunks, step2Result, caseId, file.id, file.name, log);
+        }
+
+        cp.step2Complete = true;
+        cp.step3Complete = true;
+        await writeCheckpoint(caseId, cp);
+      }
+
+      if (cp.processingPath === 'path2-async') {
+        cp.step2Complete = true;
+        await writeCheckpoint(caseId, cp);
+      }
+    }
+
+    // ── Resume Step 3 if needed (Path 2 only — Path 1 handled above) ────────
+    if (!cp.step3Complete) {
+      currentStep = 'Step 3 (reassembly + BigQuery ingestion — resume)';
+      if (isCancelled()) throw new Error('Processing was cancelled.');
+
+      log('info', '[Resume] Running Step 3: reassembly + BigQuery ingestion');
+      await deleteCaseRows(caseId); // ensure idempotency
+
+      const docaiResult: DocAIResult = {
+        path: 'path2-async',
+        ocrOutputPrefix: cp.ocrOutputPrefix!,
+        layoutOutputPrefix: cp.layoutOutputPrefix!,
+      };
+
+      for (const file of caseData.files) {
+        if (isCancelled()) throw new Error('Processing was cancelled.');
+        const chunks = await listChunkRefs(caseId, file.id);
+        if (chunks.length === 0) {
+          log('warn', `[Resume] No staging chunks for file "${file.name}" — skipping (may already be scrubbed)`);
+          continue;
+        }
+        await step3(chunks, docaiResult, caseId, file.id, file.name, log, { skipOutputScrub: true });
+      }
+
+      // Scrub shared output prefixes
+      log('info', '[Resume] Scrubbing shared DocAI output staging');
+      await Promise.all([
+        deletePrefix(BUCKET_OUTPUT(), cp.ocrOutputPrefix!),
+        deletePrefix(BUCKET_OUTPUT(), cp.layoutOutputPrefix!),
+      ]);
+
+      cp.step3Complete = true;
+      await writeCheckpoint(caseId, cp);
+    }
+
+    // ── Resume Steps 4-5 (idempotent — read from BigQuery, write to Firestore) ──
+    const freshCase = await getCase(caseId);
+
+    if (!freshCase?.table1?.length) {
+      currentStep = 'Step 4 (Table 1 generation — resume)';
+      if (isCancelled()) throw new Error('Processing was cancelled.');
+      log('info', '[Resume] Running Step 4: Table 1 generation');
+      const t1Prompt = freshCase?.table1Prompt;
+      const { rows: table1Rows, markdownTable: table1Md } = await step4(caseId, t1Prompt, log);
+      await updateCase(caseId, { table1: table1Rows, table1Markdown: table1Md });
+    } else {
+      log('info', '[Resume] Step 4 already complete — skipping');
+    }
+
+    if (!freshCase?.table2?.length) {
+      currentStep = 'Step 5 (Table 2 generation — resume)';
+      if (isCancelled()) throw new Error('Processing was cancelled.');
+      log('info', '[Resume] Running Step 5: Table 2 generation');
+      const latestCase = await getCase(caseId);
+      const t2Prompt = latestCase?.table2Prompt;
+      const { rows: table2Rows, markdownTable: table2Md } = await step5(
+        caseId, latestCase!.table1Markdown!, t2Prompt, log,
+      );
+      await updateCase(caseId, { table2: table2Rows, table2Markdown: table2Md });
+    } else {
+      log('info', '[Resume] Step 5 already complete — skipping');
+    }
+
+    // ── Finalise ──────────────────────────────────────────────────────────────
+    const finalCase = await getCase(caseId);
+    const now = new Date().toISOString();
+    const t1Version: TableVersion = {
+      version: 1, rows: finalCase!.table1, markdownTable: finalCase!.table1Markdown!,
+      prompt: finalCase?.table1Prompt || 'default', generatedAt: now, generatedBy: 'system (resumed)',
+    };
+    const t2Version: TableVersion = {
+      version: 1, rows: finalCase!.table2, markdownTable: finalCase!.table2Markdown!,
+      prompt: finalCase?.table2Prompt || 'default', generatedAt: now, generatedBy: 'system (resumed)',
+    };
+
+    await updateCase(caseId, {
+      status: 'complete',
+      table1Versions: [t1Version],
+      table2Versions: [t2Version],
+      table1ActiveVersion: 0,
+      table2ActiveVersion: 0,
+      dateProcessed: now,
+      totalPages: cp.totalPages,
+      pipelineCheckpoint: null,
+    } as any);
+
+    log('success', `Pipeline resumed and completed! Table 1: ${finalCase!.table1.length} records, Table 2: ${finalCase!.table2.length} conditions`);
+
+  } catch (err: any) {
+    const msg = err?.message || String(err);
+    if (cancelledRuns.has(caseId)) {
+      log('warn', 'Processing was cancelled.');
+    } else {
+      log('error', `Resume failed during ${currentStep}: ${msg}`);
+      console.error('[resume] Fatal error:', err);
+      await updateCase(caseId, { status: 'error', errorMessage: `Resume failed: ${msg}. Use "Retry Processing" to reprocess.` }).catch(() => {});
+    }
+  } finally {
+    activeRuns.delete(caseId);
+    activeLRONames.delete(caseId);
+    // Check if completed successfully before clearing LRO names
+    const snap = await getFirestore().collection('cases').doc(caseId).get().catch(() => null);
+    const cp = snap?.data()?.pipelineCheckpoint;
+    if (!cp) clearPersistedLRONames(caseId);
+    cancelledRuns.delete(caseId);
   }
 }

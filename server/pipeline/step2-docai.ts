@@ -317,7 +317,7 @@ export async function step2(
   return { path: 'path2-async', ocrOutputPrefix, layoutOutputPrefix };
 }
 
-async function pollLRO(docai: any, operationName: string, label: string, log: Log, isCancelled: () => boolean): Promise<void> {
+export async function pollLRO(docai: any, operationName: string, label: string, log: Log, isCancelled: () => boolean): Promise<void> {
   let attempts = 0;
   while (true) {
     await sleep(LRO_POLL_INTERVAL_MS);

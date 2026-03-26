@@ -184,6 +184,18 @@ export async function deleteCaseRows(caseId: string): Promise<void> {
   console.log(`[BQ] Deleted rows for case ${caseId}`);
 }
 
+/** Check which file_ids already have rows in BigQuery for a given case. */
+export async function getCaseFileIds(caseId: string): Promise<string[]> {
+  const bq = getBigQuery();
+  const query = `SELECT DISTINCT file_id FROM \`${bq.projectId}.${DATASET()}.${TABLE0()}\` WHERE case_id = @caseId`;
+  try {
+    const [rows] = await bq.query({ query, params: { caseId } });
+    return rows.map((r: any) => r.file_id);
+  } catch {
+    return []; // Table may not exist yet
+  }
+}
+
 /**
  * Delete rows whose case_id is NOT in the provided list of known IDs.
  * Used during orphan cleanup after cases have been deleted from Firestore.
