@@ -75,17 +75,92 @@ export async function insertRows(rows: Table0Row[]): Promise<void> {
   console.log(`[BQ] Inserted ${rows.length} rows for case ${rows[0].case_id}`);
 }
 
-/** Retrieve all rows for a case, ordered by chunk_index. Returns concatenated text. */
+/** Safely parse a JSON column that may be a string, object, or null. */
+function parseJsonColumn(raw: any): any[] {
+  if (!raw) return [];
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    return Array.isArray(parsed) ? parsed : [];
+  } catch { return []; }
+}
+
+/**
+ * Retrieve structured, annotated text for a case — designed as Gemini input.
+ *
+ * Uses Layout Parser chunks as the primary text source (semantically segmented,
+ * with page spans and heading hierarchy). Falls back to OCR raw_text when
+ * layout_chunks is null/empty. Groups text by file with metadata headers.
+ */
 export async function getCaseText(caseId: string): Promise<string> {
   const bq = getBigQuery();
   const query = `
-    SELECT raw_text, layout_chunks
+    SELECT file_name, abs_page_start, abs_page_end, raw_text, layout_chunks
     FROM \`${bq.projectId}.${DATASET()}.${TABLE0()}\`
     WHERE case_id = @caseId
-    ORDER BY chunk_index ASC
+    ORDER BY abs_page_start ASC, chunk_index ASC
   `;
   const [rows] = await bq.query({ query, params: { caseId } });
-  return rows.map((r: any) => r.raw_text || '').join('\n\n');
+  if (!rows.length) return '';
+
+  // Pre-pass: compute full page range per file
+  const filePageRange = new Map<string, { min: number; max: number }>();
+  for (const row of rows) {
+    const fn = row.file_name || 'Unknown file';
+    const existing = filePageRange.get(fn);
+    if (existing) {
+      existing.min = Math.min(existing.min, row.abs_page_start);
+      existing.max = Math.max(existing.max, row.abs_page_end);
+    } else {
+      filePageRange.set(fn, { min: row.abs_page_start, max: row.abs_page_end });
+    }
+  }
+
+  const sections: string[] = [];
+  let currentFile = '';
+
+  for (const row of rows) {
+    const fileName = row.file_name || 'Unknown file';
+
+    // Emit file header when file changes
+    if (fileName !== currentFile) {
+      currentFile = fileName;
+      const range = filePageRange.get(fileName)!;
+      sections.push(`\n══ FILE: "${fileName}" (Pages ${range.min}–${range.max}) ══\n`);
+    }
+
+    // Try Layout Parser chunks first, fall back to raw_text
+    const layoutChunks = parseJsonColumn(row.layout_chunks);
+
+    if (layoutChunks.length > 0) {
+      for (const chunk of layoutChunks) {
+        const ps = chunk.pageSpan;
+        const pageLabel = ps
+          ? (ps.pageStart === ps.pageEnd
+              ? `── Page ${ps.pageStart} ──`
+              : `── Pages ${ps.pageStart}–${ps.pageEnd} ──`)
+          : `── Pages ${row.abs_page_start}–${row.abs_page_end} ──`;
+
+        const headingCtx = (chunk.pageHeaders || [])
+          .map((h: any) => h.text || '')
+          .filter(Boolean)
+          .join(' > ');
+
+        let text = '';
+        if (headingCtx) text += `[${headingCtx}]\n`;
+        text += chunk.content || '';
+
+        sections.push(`${pageLabel}\n${text}`);
+      }
+    } else {
+      // Fallback: raw OCR text with page range header
+      const pageLabel = row.abs_page_start === row.abs_page_end
+        ? `── Page ${row.abs_page_start} ──`
+        : `── Pages ${row.abs_page_start}–${row.abs_page_end} ──`;
+      sections.push(`${pageLabel}\n${row.raw_text || ''}`);
+    }
+  }
+
+  return sections.join('\n\n');
 }
 
 /** Get full structured rows for a case (used by Table 2 which also needs Table 1 context). */
