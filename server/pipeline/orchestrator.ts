@@ -1,7 +1,9 @@
 /**
  * Pipeline orchestrator — coordinates Steps 1–5 for one or more uploaded files.
  *
- * Steps 1–3 run per-file sequentially (chunk → DocAI → BigQuery ingest).
+ * Path 1 (sync): Steps 1–3 run per-file sequentially.
+ * Path 2 (async LRO): Step 1 runs per-file, Step 2 batches ALL chunks into
+ *   a single pair of LROs, Step 3 runs per-file to reassemble.
  * Steps 4–5 run once after all files are ingested, querying the full case corpus.
  *
  * SSE log streaming: emits structured log events per caseId so the frontend
@@ -19,7 +21,7 @@ import { step4 } from './step4-table1.js';
 import { step5 } from './step5-table2.js';
 import { updateCase, addFileToCase, getCase, TableVersion } from '../cases.js';
 import { getFirestore, getDocAI } from '../config.js';
-import { BUCKET_AUTH } from '../gcs.js';
+import { BUCKET_AUTH, BUCKET_OUTPUT, deletePrefix } from '../gcs.js';
 import { ensureTable0Exists, deleteCaseRows } from '../bigquery.js';
 
 export type LogLevel = 'info' | 'success' | 'error' | 'warn';
@@ -47,13 +49,49 @@ const cancelledRuns = new Set<string>();
 const logSeqs = new Map<string, number>();
 
 /**
+ * Persist active LRO names to Firestore so they survive server restarts.
+ * Called when LROs are started; cleared when they complete or are cancelled.
+ */
+async function persistLRONames(caseId: string, names: string[]): Promise<void> {
+  try {
+    await getFirestore().collection('cases').doc(caseId)
+      .update({ activeLRONames: names });
+  } catch {}
+}
+
+async function clearPersistedLRONames(caseId: string): Promise<void> {
+  try {
+    await getFirestore().collection('cases').doc(caseId)
+      .update({ activeLRONames: [] });
+  } catch {}
+}
+
+/**
+ * Retrieve LRO names from Firestore (fallback when in-memory map is empty,
+ * e.g. after a server restart).
+ */
+export async function getPersistedLRONames(caseId: string): Promise<string[]> {
+  try {
+    const doc = await getFirestore().collection('cases').doc(caseId).get();
+    return doc.data()?.activeLRONames || [];
+  } catch { return []; }
+}
+
+/**
  * Cancel any active DocAI LROs for a case and mark the run as cancelled.
- * Safe to call even if no pipeline is running.
+ * Safe to call even if no pipeline is running. Falls back to Firestore
+ * if the in-memory map is empty (e.g. after a server restart).
  */
 export async function cancelPipeline(caseId: string): Promise<void> {
   cancelledRuns.add(caseId);
-  const lros = activeLRONames.get(caseId) || [];
+  let lros = activeLRONames.get(caseId) || [];
   activeLRONames.delete(caseId);
+
+  // Fallback: read from Firestore if in-memory map was empty (post-restart)
+  if (lros.length === 0) {
+    lros = await getPersistedLRONames(caseId);
+  }
+
   if (lros.length > 0) {
     const docai = getDocAI();
     await Promise.all(
@@ -63,6 +101,8 @@ export async function cancelPipeline(caseId: string): Promise<void> {
     );
     console.log(`[pipeline] Cancelled ${lros.length} DocAI LRO(s) for case ${caseId}`);
   }
+
+  await clearPersistedLRONames(caseId);
 }
 
 export function emitLog(caseId: string, level: LogLevel, message: string) {
@@ -122,6 +162,10 @@ export async function runPipeline(opts: RunOptions): Promise<void> {
   const log: Log = (level, message) => emitLog(caseId, level, message);
   const isCancelled = () => cancelledRuns.has(caseId);
 
+  // Track progress for error reporting
+  let currentFileIndex = 0;
+  let currentStep = '';
+
   try {
     await updateCase(caseId, { status: 'processing' });
     log('info', `Pipeline started for ${files.length} file(s): ${files.map(f => f.fileName).join(', ')}`);
@@ -154,41 +198,102 @@ export async function runPipeline(opts: RunOptions): Promise<void> {
     );
 
     // ── Steps 1–3: Per-file ingestion ─────────────────────────────────────────
-    for (let i = 0; i < files.length; i++) {
-      const { fileId, fileName, localFilePath } = files[i];
-      log('info', `Processing file ${i + 1}/${files.length}: ${fileName}`);
 
-      // Step 1: Upload original + chunk
+    if (processingPath === 'path2-async') {
+      // ── Path 2: batch all chunks into a single pair of LROs ───────────────
+      // Phase A: run all step1s and register files
+      const fileResults: Array<{ fileId: string; fileName: string; chunks: import('./step1-chunk.js').ChunkRef[] }> = [];
+      for (let i = 0; i < files.length; i++) {
+        currentFileIndex = i;
+        const { fileId, fileName, localFilePath } = files[i];
+        log('info', `Processing file ${i + 1}/${files.length}: ${fileName}`);
+
+        currentStep = 'Step 1 (upload + chunking)';
+        if (isCancelled()) throw new Error('Processing was cancelled.');
+        const step1Result = await step1(localFilePath, caseId, fileId, fileName, processingPath, log);
+
+        await addFileToCase(caseId, {
+          id: fileId,
+          name: fileName,
+          gcsPath: `cases/${caseId}/${fileId}/${fileName}`,
+          gcsBucket: BUCKET_AUTH(),
+          sizeBytes: statSync(localFilePath).size,
+          uploadedAt: new Date().toISOString(),
+        });
+
+        fileResults.push({ fileId, fileName, chunks: step1Result.chunks });
+
+        // Clean up local temp file — GCS staging has the chunks for LRO
+        try { unlinkSync(localFilePath); } catch {}
+        pendingCleanup.delete(localFilePath);
+      }
+
+      // Phase B: single batched step2 with all chunks from all files
+      currentStep = 'Step 2 (Document AI processing)';
       if (isCancelled()) throw new Error('Processing was cancelled.');
-      const step1Result = await step1(localFilePath, caseId, fileId, fileName, processingPath, log);
-
-      // Register the file in Firestore now that it's safely in GCS
-      await addFileToCase(caseId, {
-        id: fileId,
-        name: fileName,
-        gcsPath: `cases/${caseId}/${fileId}/${fileName}`,
-        gcsBucket: BUCKET_AUTH(),
-        sizeBytes: statSync(localFilePath).size,
-        uploadedAt: new Date().toISOString(),
-      });
-
-      // Step 2: Dual Document AI processing (sync or async depending on processingPath)
-      if (isCancelled()) throw new Error('Processing was cancelled.');
-      const step2Result = await step2(step1Result.chunks, caseId, fileId, processingPath, log, {
+      const allChunks = fileResults.flatMap(fr => fr.chunks);
+      log('info', `[Step 2] Batching ${allChunks.length} chunk(s) from ${fileResults.length} file(s) into a single LRO pair`);
+      const step2Result = await step2(allChunks, caseId, processingPath, log, {
         isCancelled,
-        onLROsStarted: (names) => activeLRONames.set(caseId, names),
+        onLROsStarted: (names) => { activeLRONames.set(caseId, names); persistLRONames(caseId, names); },
       });
 
-      // Step 3: Reassemble + BigQuery ingest + staging scrub
-      if (isCancelled()) throw new Error('Processing was cancelled.');
-      await step3(step1Result.chunks, step2Result, caseId, fileId, fileName, log);
+      // Phase C: per-file step3 (skip output scrubbing — orchestrator handles it)
+      for (let i = 0; i < fileResults.length; i++) {
+        currentFileIndex = i;
+        const fr = fileResults[i];
+        currentStep = `Step 3 (reassembly + BigQuery ingestion — ${fr.fileName})`;
+        if (isCancelled()) throw new Error('Processing was cancelled.');
+        await step3(fr.chunks, step2Result, caseId, fr.fileId, fr.fileName, log, { skipOutputScrub: true });
+      }
 
-      // Clean up local temp file immediately — GCS is now the only copy
-      try { unlinkSync(localFilePath); } catch {}
-      pendingCleanup.delete(localFilePath);
+      // Phase D: scrub shared output prefixes once
+      if (step2Result.path === 'path2-async') {
+        log('info', '[Step 3] Scrubbing shared DocAI output staging');
+        await Promise.all([
+          deletePrefix(BUCKET_OUTPUT(), step2Result.ocrOutputPrefix),
+          deletePrefix(BUCKET_OUTPUT(), step2Result.layoutOutputPrefix),
+        ]);
+      }
+
+    } else {
+      // ── Path 1: per-file sequential (sync processDocument, no LROs) ───────
+      for (let i = 0; i < files.length; i++) {
+        currentFileIndex = i;
+        const { fileId, fileName, localFilePath } = files[i];
+        log('info', `Processing file ${i + 1}/${files.length}: ${fileName}`);
+
+        currentStep = 'Step 1 (upload + chunking)';
+        if (isCancelled()) throw new Error('Processing was cancelled.');
+        const step1Result = await step1(localFilePath, caseId, fileId, fileName, processingPath, log);
+
+        await addFileToCase(caseId, {
+          id: fileId,
+          name: fileName,
+          gcsPath: `cases/${caseId}/${fileId}/${fileName}`,
+          gcsBucket: BUCKET_AUTH(),
+          sizeBytes: statSync(localFilePath).size,
+          uploadedAt: new Date().toISOString(),
+        });
+
+        currentStep = 'Step 2 (Document AI processing)';
+        if (isCancelled()) throw new Error('Processing was cancelled.');
+        const step2Result = await step2(step1Result.chunks, caseId, processingPath, log, {
+          isCancelled,
+          onLROsStarted: (names) => { activeLRONames.set(caseId, names); persistLRONames(caseId, names); },
+        });
+
+        currentStep = 'Step 3 (reassembly + BigQuery ingestion)';
+        if (isCancelled()) throw new Error('Processing was cancelled.');
+        await step3(step1Result.chunks, step2Result, caseId, fileId, fileName, log);
+
+        try { unlinkSync(localFilePath); } catch {}
+        pendingCleanup.delete(localFilePath);
+      }
     }
 
     // ── Step 4: Table 1 generation (whole case) ───────────────────────────────
+    currentStep = 'Step 4 (Table 1 generation)';
     if (isCancelled()) throw new Error('Processing was cancelled.');
     const caseData = await getCase(caseId);
     const t1Prompt = caseData?.table1Prompt;
@@ -201,6 +306,7 @@ export async function runPipeline(opts: RunOptions): Promise<void> {
     await updateCase(caseId, { table1: table1Rows, table1Markdown: table1Md });
 
     // ── Step 5: Table 2 generation (whole case) ───────────────────────────────
+    currentStep = 'Step 5 (Table 2 generation)';
     if (isCancelled()) throw new Error('Processing was cancelled.');
     const t2Prompt = caseData?.table2Prompt;
     const { rows: table2Rows, markdownTable: table2Md } = await step5(
@@ -243,14 +349,30 @@ export async function runPipeline(opts: RunOptions): Promise<void> {
       // Cancel endpoint already set status → 'draft'; don't overwrite with 'error'
       log('warn', 'Processing was cancelled.');
     } else {
-      log('error', `Pipeline failed: ${msg}`);
+      log('error', `Pipeline failed during ${currentStep || 'initialization'}: ${msg}`);
+
+      // Log which file was active and which files were never processed
+      if (files.length > 1) {
+        const failedFile = files[currentFileIndex];
+        if (failedFile) {
+          log('error', `Failed while processing file ${currentFileIndex + 1}/${files.length}: ${failedFile.fileName}`);
+        }
+        const skippedFiles = files.slice(currentFileIndex + 1);
+        if (skippedFiles.length > 0) {
+          const skippedNames = skippedFiles.map(f => f.fileName).join(', ');
+          log('error', `${skippedFiles.length} file(s) never processed: ${skippedNames}`);
+        }
+      }
+
       console.error('[pipeline] Fatal error:', err);
-      await updateCase(caseId, { status: 'error', errorMessage: msg }).catch(() => {});
+      const detailedMsg = `${currentStep || 'Pipeline'} failed on file "${files[currentFileIndex]?.fileName || 'unknown'}": ${msg}`;
+      await updateCase(caseId, { status: 'error', errorMessage: detailedMsg }).catch(() => {});
     }
   } finally {
     activeRuns.delete(caseId);
     cancelledRuns.delete(caseId);
     activeLRONames.delete(caseId);
+    clearPersistedLRONames(caseId);
     // Clean up any temp files that weren't removed inline (e.g. pipeline failed before step 3)
     for (const p of pendingCleanup) {
       try { unlinkSync(p); } catch {}

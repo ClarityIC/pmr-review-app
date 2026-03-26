@@ -21,6 +21,10 @@ import { Log } from './orchestrator.js';
 import path from 'path';
 import fs from 'fs';
 
+export interface Step3Options {
+  skipOutputScrub?: boolean;
+}
+
 export async function step3(
   chunks: ChunkRef[],
   docaiResult: DocAIResult,
@@ -28,6 +32,7 @@ export async function step3(
   fileId: string,
   fileName: string,
   log: Log,
+  options?: Step3Options,
 ): Promise<void> {
   log('info', '[Step 3] Starting reassembly and BigQuery ingestion');
 
@@ -105,10 +110,11 @@ export async function step3(
       const ocrDoc = JSON.parse(content.toString('utf8'));
 
       const sourceUri = ocrDoc?.context?.documentId?.gcsUri || '';
-      const chunk = chunks.find(c => c.gcsUri === sourceUri) || chunks[0];
+      const chunk = chunks.find(c => c.gcsUri === sourceUri);
+      if (!chunk) continue; // belongs to a different file's chunk — skip
 
-      const chunkIndex = chunk?.chunkIndex ?? 0;
-      const pageOffset = chunk?.absolutePageOffset ?? 0;
+      const chunkIndex = chunk.chunkIndex;
+      const pageOffset = chunk.absolutePageOffset;
 
       // Store only essential page metadata — full geometry would exceed BQ row limits
       const ocrPages = (ocrDoc.pages || []).map((page: any, i: number) => ({
@@ -160,17 +166,16 @@ export async function step3(
   log('info', '[Step 3] Scrubbing staging buckets (enforcing one-copy rule)');
 
   const inputPrefix = `cases/${caseId}/${fileId}/chunks`;
-  if (docaiResult.path === 'path2-async') {
-    // outputBucket scoped here to avoid unused-var warning in Path 1
+  // Always scrub this file's input staging chunks
+  await deletePrefix(BUCKET_STAGING(), inputPrefix);
+
+  if (docaiResult.path === 'path2-async' && !options?.skipOutputScrub) {
+    // Scrub shared output prefixes (skipped when orchestrator handles it for batched runs)
     const outputBucket = process.env.GCS_STAGING_OUTPUT_BUCKET || 'cic-docai-staging-outputs';
     await Promise.all([
-      deletePrefix(BUCKET_STAGING(), inputPrefix),
       deletePrefix(outputBucket, docaiResult.ocrOutputPrefix),
       deletePrefix(outputBucket, docaiResult.layoutOutputPrefix),
     ]);
-  } else {
-    // Path 1: no GCS output bucket was written
-    await deletePrefix(BUCKET_STAGING(), inputPrefix);
   }
 
   // Also delete local temp chunk files

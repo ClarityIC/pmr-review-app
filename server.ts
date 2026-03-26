@@ -25,7 +25,7 @@ import {
 } from './server/cases.js';
 import { signedWriteUrl, getBucketUsageBytes, listObjects, deletePrefix, deleteObject, downloadFile, BUCKET_AUTH, BUCKET_STAGING, BUCKET_OUTPUT } from './server/gcs.js';
 import { deleteCaseRows, deleteOrphanRows } from './server/bigquery.js';
-import { runPipeline, cancelPipeline, getActiveLRONames, FileInput } from './server/pipeline/orchestrator.js';
+import { runPipeline, cancelPipeline, getActiveLRONames, getPersistedLRONames, FileInput } from './server/pipeline/orchestrator.js';
 import { regenerateTable } from './server/pipeline/regenerate.js';
 import { runPreflight } from './server/preflight.js';
 import { DEFAULT_TABLE1_PROMPT, DEFAULT_TABLE2_PROMPT } from './server/pipeline/prompts.js';
@@ -62,19 +62,81 @@ cleanupStaleFiles(path.join(process.cwd(), 'chunks'));
 // The pipeline runs as a background async task. If Cloud Run kills the instance
 // mid-run (scale-down, restart, deploy), any case still marked 'processing' is
 // orphaned — the pipeline will never complete. Reset them to 'error' so users
-// can retry via the Retry Processing button.
+// can retry via the Retry Processing button. Append detailed log entries so the
+// user can see what was in progress and what was skipped.
 setImmediate(async () => {
   try {
     const { listCases: _list, updateCase: _update } = await import('./server/cases.js');
+    const { getFirestore: _getFs } = await import('./server/config.js');
+    const { FieldValue } = await import('@google-cloud/firestore');
     const cases = await _list();
-    const stuck = cases.filter(c => c.status === 'processing');
+    const stuck = cases.filter(c => c.status === 'processing' || c.regeneratingTable);
     if (stuck.length === 0) return;
     console.log(`[startup] Resetting ${stuck.length} stuck processing case(s) to error`);
+
+    // Cancel any persisted DocAI LROs that were running before the restart
+    try {
+      const { getDocAI: _getDocAI } = await import('./server/config.js');
+      const { getPersistedLRONames: _getPersistedLROs } = await import('./server/pipeline/orchestrator.js');
+      const docai = _getDocAI();
+      for (const c of stuck) {
+        const lros = await _getPersistedLROs(c.id);
+        if (lros.length > 0) {
+          await Promise.all(lros.map(name =>
+            (docai.operationsClient as any).cancelOperation({ name }).catch(() => {}),
+          ));
+          console.log(`[startup] Cancelled ${lros.length} persisted LRO(s) for case ${c.id}`);
+        }
+      }
+    } catch (e) {
+      console.error('[startup] Failed to cancel persisted LROs:', e);
+    }
+
+    const fs = _getFs();
+    const now = new Date().toISOString();
+
     await Promise.all(
-      stuck.map(c => _update(c.id, {
-        status: 'error',
-        errorMessage: 'Processing was interrupted when the server restarted. Use the "Retry Processing" button to reprocess.',
-      }).catch(() => {})),
+      stuck.map(async (c) => {
+        const wasRegenerating = !!c.regeneratingTable;
+        const existingLogs: any[] = c.processingLogs || [];
+        const lastLog = existingLogs.length > 0
+          ? existingLogs[existingLogs.length - 1]
+          : null;
+        const lastMsg = lastLog?.message || '(no log entries)';
+        const lastTime = lastLog?.timestamp || 'unknown';
+
+        const errorEntries = [
+          { level: 'error', message: `Server restarted while ${wasRegenerating ? `regenerating ${c.regeneratingTable}` : 'processing'}. The pipeline was interrupted and did not complete.`, timestamp: now, seq: (lastLog?.seq ?? 0) + 1 },
+          { level: 'error', message: `Last activity before restart: "${lastMsg}" at ${lastTime}`, timestamp: now, seq: (lastLog?.seq ?? 0) + 2 },
+        ];
+
+        // For multi-file runs, figure out which files were completed vs skipped
+        if (!wasRegenerating && c.files?.length > 0) {
+          const registeredFileNames = new Set(c.files.map((f: any) => f.name));
+          // The pipeline registers each file in Firestore after Step 1 completes.
+          // Files that were uploaded but never registered were never processed.
+          // We can't know the full upload manifest from here, but we can note
+          // how many files were registered vs total if the case has file metadata.
+          errorEntries.push({
+            level: 'info',
+            message: `${c.files.length} file(s) were registered before the interruption: ${[...registeredFileNames].join(', ')}`,
+            timestamp: now,
+            seq: (lastLog?.seq ?? 0) + 3,
+          });
+        }
+
+        const patch: Record<string, any> = wasRegenerating
+          ? { regeneratingTable: null }
+          : { status: 'error' as const, errorMessage: `Processing was interrupted when the server restarted (last step: "${lastMsg}"). Use the "Retry Processing" button to reprocess.` };
+
+        try {
+          await _update(c.id, patch);
+          await fs.collection('cases').doc(c.id).update({
+            processingLogs: FieldValue.arrayUnion(...errorEntries),
+            activeLRONames: [],  // clear persisted LROs
+          });
+        } catch {}
+      }),
     );
   } catch (e) {
     console.error('[startup] Failed to reset stuck cases:', e);
@@ -543,6 +605,17 @@ app.get('/api/admin/docai/operations', async (_req: Request, res: Response) => {
     const allNames: string[] = [];
     for (const names of lroMap.values()) allNames.push(...names);
 
+    // Also check Firestore for persisted LROs (survives server restarts)
+    const cases = await listCases();
+    const processingCaseIds = cases.filter(c => c.status === 'processing').map(c => c.id);
+    const inMemoryNames = new Set(allNames);
+    for (const cid of processingCaseIds) {
+      const persisted = await getPersistedLRONames(cid);
+      for (const n of persisted) {
+        if (!inMemoryNames.has(n)) { allNames.push(n); inMemoryNames.add(n); }
+      }
+    }
+
     // Check each LRO's current status via GetOperation (IS supported by DocAI)
     const pendingOperations = (await Promise.all(
       allNames.map(async (name) => {
@@ -558,7 +631,6 @@ app.get('/api/admin/docai/operations', async (_req: Request, res: Response) => {
       }),
     )).filter(Boolean) as { name: string; state: string }[];
 
-    const cases = await listCases();
     const processingCases = cases
       .filter(c => c.status === 'processing')
       .map(c => ({ id: c.id, patientName: c.patientName }));
@@ -573,19 +645,28 @@ app.post('/api/admin/docai/cancel-all', async (_req: Request, res: Response) => 
   try {
     const docai = getDocAI();
 
-    // Cancel all in-memory tracked LROs via CancelOperation (IS supported by DocAI)
+    // Collect LRO names from in-memory map
     const lroMap = getActiveLRONames();
     const allNames: string[] = [];
     for (const names of lroMap.values()) allNames.push(...names);
+
+    // Also collect persisted LROs from Firestore (survives server restarts)
+    const cases = await listCases();
+    const processingCases = cases.filter(c => c.status === 'processing');
+    const inMemoryNames = new Set(allNames);
+    for (const c of processingCases) {
+      const persisted = await getPersistedLRONames(c.id);
+      for (const n of persisted) {
+        if (!inMemoryNames.has(n)) { allNames.push(n); inMemoryNames.add(n); }
+      }
+    }
+
+    // Cancel all LROs via CancelOperation
     await Promise.all(
       allNames.map(name =>
         (docai.operationsClient as any).cancelOperation({ name }).catch(() => {}),
       ),
     );
-
-    // Revert all processing cases to 'draft' and cancel in-memory pipelines
-    const cases = await listCases();
-    const processingCases = cases.filter(c => c.status === 'processing');
     await Promise.all(
       processingCases.map(async c => {
         await cancelPipeline(c.id);

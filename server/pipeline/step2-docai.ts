@@ -169,7 +169,6 @@ async function processWithRetry(
 export async function step2(
   chunks: ChunkRef[],
   caseId: string,
-  fileId: string,
   processingPath: ProcessingPath,
   log: Log,
   cancelOpts: CancelOpts,
@@ -259,8 +258,8 @@ export async function step2(
   log('info', '[Step 2] Path 2: async batch processing');
 
   const outputBucket = BUCKET_OUTPUT();
-  const ocrOutputPrefix    = `cases/${caseId}/${fileId}/ocr-output/`;
-  const layoutOutputPrefix = `cases/${caseId}/${fileId}/layout-output/`;
+  const ocrOutputPrefix    = `cases/${caseId}/docai-output/ocr/`;
+  const layoutOutputPrefix = `cases/${caseId}/docai-output/layout/`;
 
   // Build input documents list (all chunk GCS URIs)
   const inputDocuments = {
