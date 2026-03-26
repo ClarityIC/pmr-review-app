@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
-  UploadCloud, Loader2, Download, ChevronLeft, ChevronRight, ChevronDown, X,
+  UploadCloud, Loader2, Download, ChevronLeft, ChevronRight, ChevronDown, X, Check,
   PanelRightClose, PanelRightOpen, FileText, ArrowUp, AlertCircle, CheckCircle2, Play, StopCircle, RotateCcw,
   ZoomIn, ZoomOut, Maximize2,
 } from 'lucide-react';
@@ -46,6 +46,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
   const [cancelling, setCancelling] = useState(false);
   const [reprocessing, setReprocessing] = useState(false);
   const [cancelledFileInfo, setCancelledFileInfo] = useState<Array<{ name: string; size: number }>>([]);
+  const [uploadProgress, setUploadProgress] = useState<Map<number, number>>(new Map());
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // SSE log stream
@@ -179,6 +180,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
   const handleUpload = async (files: File[]) => {
     if (!files.length) return;
     setUploading(true);
+    setUploadProgress(new Map());
     seenLogsRef.current.clear(); // reset dedup so new SSE entries aren't skipped
     setLogDrawerOpen(true);
 
@@ -197,14 +199,23 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
         files: { fileId: string; name: string; gcsPath: string; url: string }[];
       };
 
-      // 2. Upload each file directly to GCS via signed URL (bypasses Cloud Run size limit)
+      // 2. Upload each file directly to GCS via signed URL with progress tracking
       for (let i = 0; i < files.length; i++) {
-        const uploadRes = await fetch(signedFiles[i].url, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/pdf' },
-          body: files[i],
+        setUploadProgress(prev => new Map(prev).set(i, 0));
+        await new Promise<void>((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('PUT', signedFiles[i].url);
+          xhr.setRequestHeader('Content-Type', 'application/pdf');
+          xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable) {
+              const pct = Math.round((e.loaded / e.total) * 100);
+              setUploadProgress(prev => new Map(prev).set(i, pct));
+            }
+          };
+          xhr.onload = () => xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error('failed'));
+          xhr.onerror = () => reject(new Error('failed'));
+          xhr.send(files[i]);
         });
-        if (!uploadRes.ok) throw new Error('failed');
       }
 
       // 3. Tell the server all files are uploaded — start the pipeline
@@ -215,7 +226,9 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
       });
       if (!processRes.ok) throw new Error('failed');
 
-      // Update local case status immediately so SSE sub kicks in
+      // Clear file list and transition to processing view
+      setPendingFiles([]);
+      setUploadProgress(new Map());
       setCaseData((prev: any) => prev ? { ...prev, status: 'processing' } : prev);
     } catch (e: any) {
       console.error('[upload]', e);
@@ -230,10 +243,8 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
   };
 
   const startProcessing = () => {
-    const files = pendingFiles;
-    setCancelledFileInfo(files.map(f => ({ name: f.name, size: f.size })));
-    setPendingFiles([]);
-    handleUpload(files);
+    setCancelledFileInfo(pendingFiles.map(f => ({ name: f.name, size: f.size })));
+    handleUpload(pendingFiles);
   };
 
   const handleCancel = async () => {
@@ -404,7 +415,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
 
   if (!caseData) return null;
 
-  const isProcessing = caseData.status === 'processing' || uploading;
+  const isProcessing = caseData.status === 'processing';
   const hasResults  = caseData.status === 'complete' && (caseData.table1?.length > 0 || caseData.table2?.length > 0);
   const hasError    = caseData.status === 'error';
 
@@ -463,7 +474,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
           <input ref={fileInputRef} type="file" accept="application/pdf" multiple className="hidden" onChange={onFilePick} />
 
           {/* ── Drop zone: consistent size whether or not files are staged ── */}
-          {!hasResults && !isProcessing && (
+          {!hasResults && !isProcessing && !uploading && (
             <div className="p-6 space-y-3">
               <div
                 onDragOver={e => { e.preventDefault(); setDragging(true); }}
@@ -590,6 +601,51 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                   </div>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* ── Upload progress view (shown while files are uploading to GCS) ── */}
+          {uploading && pendingFiles.length > 0 && (
+            <div className="p-6">
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl overflow-hidden shadow-sm">
+                <div className="px-5 py-3.5 border-b border-slate-100 dark:border-slate-800">
+                  <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+                    Uploading {pendingFiles.length} file{pendingFiles.length !== 1 ? 's' : ''}…
+                  </p>
+                </div>
+                <ul className="divide-y divide-slate-50 dark:divide-slate-800">
+                  {pendingFiles.map((f, idx) => (
+                    <li key={idx} className="px-5 py-3">
+                      <div className="flex items-center gap-3">
+                        <FileText className="w-4 h-4 text-slate-400 shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-slate-800 dark:text-slate-200 truncate">{f.name}</p>
+                          <p className="text-xs text-slate-500">{formatBytes(f.size)}</p>
+                        </div>
+                        {uploadProgress.has(idx) && uploadProgress.get(idx)! >= 100 && (
+                          <Check className="w-4 h-4 text-emerald-500 shrink-0" />
+                        )}
+                      </div>
+                      {uploadProgress.has(idx) && (
+                        <div className="mt-2 h-1.5 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-indigo-500 rounded-full transition-all duration-300 ease-out"
+                            style={{ width: `${uploadProgress.get(idx) || 0}%` }}
+                          />
+                        </div>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+                <div className="px-5 py-4 bg-slate-50 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-800 flex justify-end">
+                  <button
+                    disabled
+                    className="flex items-center gap-2 px-6 py-2.5 bg-indigo-600 text-white text-sm font-semibold rounded-xl shadow-sm opacity-50 cursor-not-allowed"
+                  >
+                    <Loader2 className="w-4 h-4 animate-spin" /> Uploading…
+                  </button>
+                </div>
+              </div>
             </div>
           )}
 
