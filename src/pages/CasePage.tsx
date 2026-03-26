@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
   UploadCloud, Loader2, Download, ChevronLeft, ChevronRight, ChevronDown, X,
   PanelRightClose, PanelRightOpen, FileText, ArrowUp, AlertCircle, CheckCircle2, Play, StopCircle, RotateCcw,
-  ZoomIn, ZoomOut,
+  ZoomIn, ZoomOut, Maximize2,
 } from 'lucide-react';
 import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
@@ -20,7 +20,7 @@ import SortableFilterableHeader, {
   SortConfig, FilterConfig,
 } from '../components/SortableFilterableHeader.js';
 import { User } from '../main.js';
-import { cn, formatDate, formatBytes } from '../lib/utils.js';
+import { cn, formatDate, formatBytes, parseCellColor } from '../lib/utils.js';
 
 // Configure pdf.js worker — must use react-pdf's bundled pdfjs-dist to avoid version mismatch
 pdfjs.GlobalWorkerOptions.workerSrc = new URL('react-pdf/node_modules/pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
@@ -286,6 +286,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
   // ── PDF viewer ─────────────────────────────────────────────────────────────
   const [pdfFileId, setPdfFileId] = useState<string | null>(null);
   const [pdfScale, setPdfScale] = useState(1.0);
+  const [pdfPageRatio, setPdfPageRatio] = useState(0); // height/width of intrinsic page
 
   const openPdfAtPage = useCallback((fileId: string, fileName: string, page: number) => {
     setShowPdfPane(true);
@@ -766,20 +767,23 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                       {table1Rows.map((row: any, idx: number) => (
                         <tr key={idx} className={cn('hover:bg-indigo-50/30 dark:hover:bg-indigo-900/10 transition-colors', idx % 2 === 1 && 'bg-slate-50/50 dark:bg-slate-900/30')}>
-                          {t1Keys.map((key, i) => (
-                            <td key={key} className={cn('px-4 py-3 text-slate-700 dark:text-slate-300 border-r border-slate-100 dark:border-slate-800 last:border-r-0', i === 0 && 'sticky left-0 z-[1] bg-white dark:bg-slate-900', i === 0 && idx % 2 === 1 && 'bg-slate-50 dark:bg-slate-900')} style={{ width: t1ColWidths[key] || undefined, minWidth: 80, maxWidth: 500 }}>
-                              {key.toLowerCase().includes('citation') ? (
-                                <button
-                                  onClick={() => handleCitationClick(String(row[key] || ''))}
-                                  className="text-indigo-600 dark:text-indigo-400 hover:underline text-left text-xs"
-                                >
-                                  {row[key] || '—'}
-                                </button>
-                              ) : (
-                                <div className="text-xs whitespace-pre-wrap break-words">{row[key] || '—'}</div>
-                              )}
-                            </td>
-                          ))}
+                          {t1Keys.map((key, i) => {
+                            const { text: cellText, colorClass } = parseCellColor(String(row[key] || ''));
+                            return (
+                              <td key={key} className={cn('px-4 py-3 text-slate-700 dark:text-slate-300 border-r border-slate-100 dark:border-slate-800 last:border-r-0', i === 0 && 'sticky left-0 z-[1] bg-white dark:bg-slate-900', i === 0 && idx % 2 === 1 && 'bg-slate-50 dark:bg-slate-900', colorClass)} style={{ width: t1ColWidths[key] || undefined, minWidth: 80, maxWidth: 500 }}>
+                                {key.toLowerCase().includes('citation') ? (
+                                  <button
+                                    onClick={() => handleCitationClick(String(row[key] || ''))}
+                                    className="text-indigo-600 dark:text-indigo-400 hover:underline text-left text-xs"
+                                  >
+                                    {cellText || '—'}
+                                  </button>
+                                ) : (
+                                  <div className="text-xs whitespace-pre-wrap break-words">{cellText || '—'}</div>
+                                )}
+                              </td>
+                            );
+                          })}
                         </tr>
                       ))}
                     </tbody>
@@ -868,11 +872,14 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                       {table2Rows.map((row: any, idx: number) => (
                         <tr key={idx} className={cn('hover:bg-indigo-50/30 dark:hover:bg-indigo-900/10 transition-colors', idx % 2 === 1 && 'bg-slate-50/50 dark:bg-slate-900/30')}>
-                          {t2Keys.map((key, i) => (
-                            <td key={key} className={cn('px-4 py-3 text-slate-700 dark:text-slate-300 border-r border-slate-100 dark:border-slate-800 last:border-r-0', i === 0 && 'sticky left-0 z-[1] bg-white dark:bg-slate-900', i === 0 && idx % 2 === 1 && 'bg-slate-50 dark:bg-slate-900')} style={{ width: t2ColWidths[key] || undefined, minWidth: 80, maxWidth: 500 }}>
-                              <div className="text-xs whitespace-pre-wrap break-words">{row[key] || '—'}</div>
-                            </td>
-                          ))}
+                          {t2Keys.map((key, i) => {
+                            const { text: cellText, colorClass } = parseCellColor(String(row[key] || ''));
+                            return (
+                              <td key={key} className={cn('px-4 py-3 text-slate-700 dark:text-slate-300 border-r border-slate-100 dark:border-slate-800 last:border-r-0', i === 0 && 'sticky left-0 z-[1] bg-white dark:bg-slate-900', i === 0 && idx % 2 === 1 && 'bg-slate-50 dark:bg-slate-900', colorClass)} style={{ width: t2ColWidths[key] || undefined, minWidth: 80, maxWidth: 500 }}>
+                                <div className="text-xs whitespace-pre-wrap break-words">{cellText || '—'}</div>
+                              </td>
+                            );
+                          })}
                         </tr>
                       ))}
                     </tbody>
@@ -960,6 +967,25 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                     <button onClick={() => setPdfScale(s => Math.min(3, s + 0.15))} className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors" title="Zoom in">
                       <ZoomIn className="w-3.5 h-3.5" />
                     </button>
+                    <button
+                      onClick={() => {
+                        if (!pdfPageRatio || !pdfContentRef.current) return;
+                        // Available height = content area minus padding (2 * 8px)
+                        const availH = pdfContentRef.current.clientHeight - 16;
+                        // Page width needed so rendered page height === availH
+                        const neededPageW = availH / pdfPageRatio;
+                        // Pane width = page width + container padding (16px) + pane chrome (border etc)
+                        const neededPaneW = neededPageW + 20;
+                        const clamped = Math.max(280, Math.min(window.innerWidth * 0.6, neededPaneW));
+                        setPdfPaneWidth(clamped);
+                        setPdfScale(1.0);
+                      }}
+                      disabled={!pdfPageRatio}
+                      className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 disabled:opacity-30 transition-colors ml-1 border-l border-slate-200 dark:border-slate-700 pl-2"
+                      title="Fit full page vertically"
+                    >
+                      <Maximize2 className="w-3.5 h-3.5" />
+                    </button>
                   </div>
                   {pdfUrl && (
                     <a href={pdfUrl} download={pdfName} className="flex items-center gap-1 text-xs text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors" title="Download PDF">
@@ -993,7 +1019,13 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                       </div>
                     }
                   >
-                    <Page pageNumber={pageNum} width={Math.max(200, (pdfContainerWidth - 16)) * pdfScale} renderAnnotationLayer renderTextLayer />
+                    <Page pageNumber={pageNum} width={Math.max(200, (pdfContainerWidth - 16)) * pdfScale} renderAnnotationLayer renderTextLayer
+                      onLoadSuccess={(page) => {
+                        if (page.originalWidth && page.originalHeight) {
+                          setPdfPageRatio(page.originalHeight / page.originalWidth);
+                        }
+                      }}
+                    />
                   </Document>
                 )}
               </div>
