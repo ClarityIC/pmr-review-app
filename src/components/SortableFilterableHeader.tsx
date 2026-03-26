@@ -38,7 +38,7 @@ export default function SortableFilterableHeader({
   const isFiltered = filterValue !== '';
 
   return (
-    <th className={cn('px-4 py-3 whitespace-nowrap relative border-r border-slate-100 dark:border-slate-800 last:border-r-0', className)} style={style}>
+    <th className={cn('px-4 py-3 relative border-r border-slate-100 dark:border-slate-800 last:border-r-0', className)} style={style}>
       <div className="flex items-center gap-1" ref={ref}>
         <button
           onClick={() => onSort(columnKey)}
@@ -93,6 +93,13 @@ export default function SortableFilterableHeader({
   );
 }
 
+/** Try to parse MM/DD/YYYY → epoch ms; returns null if not a date. */
+function parseDateValue(s: string): number | null {
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!m) return null;
+  return new Date(+m[3], +m[1] - 1, +m[2]).getTime();
+}
+
 /** Apply sort + filter to a dataset */
 export function applySortFilter<T extends Record<string, any>>(
   data: T[],
@@ -110,7 +117,18 @@ export function applySortFilter<T extends Record<string, any>>(
     result.sort((a, b) => {
       const av = String(a[sort.key] ?? '');
       const bv = String(b[sort.key] ?? '');
-      const cmp = av.localeCompare(bv, undefined, { numeric: true });
+      const da = parseDateValue(av);
+      const db = parseDateValue(bv);
+      let cmp: number;
+      if (da !== null && db !== null) {
+        cmp = da - db;
+      } else if (da !== null) {
+        cmp = -1; // real dates before non-dates ("N/A")
+      } else if (db !== null) {
+        cmp = 1;
+      } else {
+        cmp = av.localeCompare(bv, undefined, { numeric: true });
+      }
       return sort.direction === 'asc' ? cmp : -cmp;
     });
   }

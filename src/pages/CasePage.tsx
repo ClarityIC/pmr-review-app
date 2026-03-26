@@ -725,26 +725,22 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                 </button>
               </div>
 
+                <div className="relative">
                 <div
                   ref={t1ScrollRef}
                   className="relative bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl overflow-auto shadow-sm max-h-[70vh]"
-                  style={{
-                    boxShadow: [
-                      t1Shadow.left ? 'inset 8px 0 6px -6px rgba(0,0,0,0.1)' : '',
-                      t1Shadow.right ? 'inset -8px 0 6px -6px rgba(0,0,0,0.1)' : '',
-                    ].filter(Boolean).join(', ') || undefined,
-                  }}
                 >
                   <table className="w-full text-sm text-left min-w-[900px]">
                     <thead className="bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-400 text-xs font-medium uppercase tracking-wider border-b border-slate-200 dark:border-slate-700 sticky top-0 z-10">
                       <tr>
-                        {t1Keys.map(key => (
+                        {t1Keys.map((key, i) => (
                           <SortableFilterableHeader
                             key={key} label={key} columnKey={key}
                             sortConfig={t1Sort} onSort={k => handleSort(k, setT1Sort)}
                             filterValue={t1Filters[key] || ''}
                             onFilter={(k, v) => setT1Filters(prev => ({ ...prev, [k]: v }))}
                             uniqueValues={getUnique(caseData.table1, key)}
+                            className={i === 0 ? 'sticky left-0 z-20 bg-slate-50 dark:bg-slate-800' : undefined}
                             style={{ width: t1ColWidths[key] || undefined, minWidth: 80, maxWidth: 500 }}
                             resizeHandle={
                               <div
@@ -763,8 +759,8 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                       {table1Rows.map((row: any, idx: number) => (
                         <tr key={idx} className={cn('hover:bg-indigo-50/30 dark:hover:bg-indigo-900/10 transition-colors', idx % 2 === 1 && 'bg-slate-50/50 dark:bg-slate-900/30')}>
-                          {t1Keys.map(key => (
-                            <td key={key} className="px-4 py-3 text-slate-700 dark:text-slate-300 border-r border-slate-100 dark:border-slate-800 last:border-r-0" style={{ width: t1ColWidths[key] || undefined, minWidth: 80, maxWidth: 500 }}>
+                          {t1Keys.map((key, i) => (
+                            <td key={key} className={cn('px-4 py-3 text-slate-700 dark:text-slate-300 border-r border-slate-100 dark:border-slate-800 last:border-r-0', i === 0 && 'sticky left-0 z-[1] bg-white dark:bg-slate-900', i === 0 && idx % 2 === 1 && 'bg-slate-50 dark:bg-slate-900')} style={{ width: t1ColWidths[key] || undefined, minWidth: 80, maxWidth: 500 }}>
                               {key.toLowerCase().includes('citation') ? (
                                 <button
                                   onClick={() => handleCitationClick(String(row[key] || ''))}
@@ -781,6 +777,15 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                       ))}
                     </tbody>
                   </table>
+                </div>
+                {t1Shadow.left && (
+                  <div className="pointer-events-none absolute left-0 top-0 bottom-0 w-4 z-10 rounded-l-xl"
+                       style={{ background: 'linear-gradient(to right, rgba(0,0,0,0.08), transparent)' }} />
+                )}
+                {t1Shadow.right && (
+                  <div className="pointer-events-none absolute right-0 top-0 bottom-0 w-4 z-10 rounded-r-xl"
+                       style={{ background: 'linear-gradient(to left, rgba(0,0,0,0.08), transparent)' }} />
+                )}
                 </div>
               </>
               )}
@@ -822,26 +827,22 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                 </button>
               </div>
 
+                <div className="relative">
                 <div
                   ref={t2ScrollRef}
                   className="relative bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl overflow-auto shadow-sm max-h-[70vh]"
-                  style={{
-                    boxShadow: [
-                      t2Shadow.left ? 'inset 8px 0 6px -6px rgba(0,0,0,0.1)' : '',
-                      t2Shadow.right ? 'inset -8px 0 6px -6px rgba(0,0,0,0.1)' : '',
-                    ].filter(Boolean).join(', ') || undefined,
-                  }}
                 >
                   <table className="w-full text-sm text-left min-w-[900px]">
                     <thead className="bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-400 text-xs font-medium uppercase tracking-wider border-b border-slate-200 dark:border-slate-700 sticky top-0 z-10">
                       <tr>
-                        {t2Keys.map(key => (
+                        {t2Keys.map((key, i) => (
                           <SortableFilterableHeader
                             key={key} label={key} columnKey={key}
                             sortConfig={t2Sort} onSort={k => handleSort(k, setT2Sort)}
                             filterValue={t2Filters[key] || ''}
                             onFilter={(k, v) => setT2Filters(prev => ({ ...prev, [k]: v }))}
                             uniqueValues={getUnique(caseData.table2, key)}
+                            className={i === 0 ? 'sticky left-0 z-20 bg-slate-50 dark:bg-slate-800' : undefined}
                             style={{ width: t2ColWidths[key] || undefined, minWidth: 80, maxWidth: 500 }}
                             resizeHandle={
                               <div
@@ -860,8 +861,8 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                       {table2Rows.map((row: any, idx: number) => (
                         <tr key={idx} className={cn('hover:bg-indigo-50/30 dark:hover:bg-indigo-900/10 transition-colors', idx % 2 === 1 && 'bg-slate-50/50 dark:bg-slate-900/30')}>
-                          {t2Keys.map(key => (
-                            <td key={key} className="px-4 py-3 text-slate-700 dark:text-slate-300 border-r border-slate-100 dark:border-slate-800 last:border-r-0" style={{ width: t2ColWidths[key] || undefined, minWidth: 80, maxWidth: 500 }}>
+                          {t2Keys.map((key, i) => (
+                            <td key={key} className={cn('px-4 py-3 text-slate-700 dark:text-slate-300 border-r border-slate-100 dark:border-slate-800 last:border-r-0', i === 0 && 'sticky left-0 z-[1] bg-white dark:bg-slate-900', i === 0 && idx % 2 === 1 && 'bg-slate-50 dark:bg-slate-900')} style={{ width: t2ColWidths[key] || undefined, minWidth: 80, maxWidth: 500 }}>
                               <div className="text-xs whitespace-pre-wrap break-words">{row[key] || '—'}</div>
                             </td>
                           ))}
@@ -869,6 +870,15 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                       ))}
                     </tbody>
                   </table>
+                </div>
+                {t2Shadow.left && (
+                  <div className="pointer-events-none absolute left-0 top-0 bottom-0 w-4 z-10 rounded-l-xl"
+                       style={{ background: 'linear-gradient(to right, rgba(0,0,0,0.08), transparent)' }} />
+                )}
+                {t2Shadow.right && (
+                  <div className="pointer-events-none absolute right-0 top-0 bottom-0 w-4 z-10 rounded-r-xl"
+                       style={{ background: 'linear-gradient(to left, rgba(0,0,0,0.08), transparent)' }} />
+                )}
                 </div>
               </>
               )}
