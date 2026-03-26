@@ -93,6 +93,7 @@ async function writeCheckpoint(caseId: string, cp: PipelineCheckpoint): Promise<
 }
 
 export async function cancelPipeline(caseId: string): Promise<void> {
+  emitLog(caseId, 'warn', 'Cancellation requested — stopping pipeline…');
   cancelledRuns.add(caseId);
   let lros = activeLRONames.get(caseId) || [];
   activeLRONames.delete(caseId);
@@ -103,6 +104,7 @@ export async function cancelPipeline(caseId: string): Promise<void> {
   }
 
   if (lros.length > 0) {
+    emitLog(caseId, 'warn', `Cancelling ${lros.length} active Document AI operation(s)…`);
     const docai = getDocAI();
     await Promise.all(
       lros.map(name =>
@@ -118,6 +120,7 @@ export async function cancelPipeline(caseId: string): Promise<void> {
     await getFirestore().collection('cases').doc(caseId)
       .update({ pipelineCheckpoint: null });
   } catch {}
+  emitLog(caseId, 'warn', 'Pipeline cancelled successfully.');
 }
 
 export function emitLog(caseId: string, level: LogLevel, message: string) {
