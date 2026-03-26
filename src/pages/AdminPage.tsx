@@ -6,6 +6,7 @@ import {
   ScanSearch, StopCircle, CheckCircle2, AlertCircle, Trash2,
 } from 'lucide-react';
 import NavBar from '../components/NavBar.js';
+import MarkdownEditor from '../components/MarkdownEditor.js';
 import { User } from '../main.js';
 import { cn, formatBytes, formatDate, formatDateTime } from '../lib/utils.js';
 import { motion, AnimatePresence } from 'motion/react';
@@ -377,12 +378,10 @@ function PromptsTab({ addError }: { addError: (m: string) => void }) {
             {hasUnsaved && (
               <div className="absolute -top-2 right-0 text-[10px] text-amber-500 font-medium bg-amber-50 dark:bg-amber-900/30 px-2 py-0.5 rounded-full">Unsaved changes</div>
             )}
-            <textarea
+            <MarkdownEditor
               value={promptText}
-              onChange={e => setPromptText(e.target.value)}
+              onChange={setPromptText}
               rows={24}
-              className="w-full font-mono text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-4 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-none"
-              spellCheck={false}
             />
           </div>
 

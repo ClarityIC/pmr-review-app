@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Loader2, ChevronDown, Clock, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { cn } from '../lib/utils.js';
+import MarkdownEditor from './MarkdownEditor.js';
 
 interface Props {
   caseId: string;
@@ -60,32 +60,7 @@ export default function RegenerateEditor({ caseId, table, onClose, onSuccess, ad
     setStatusMessages([]);
     setErrorMessage('');
 
-    // Subscribe to SSE for live progress
-    const es = new EventSource(`/api/cases/${caseId}/logs`);
-    sseRef.current = es;
-    es.onmessage = (e) => {
-      try {
-        const evt = JSON.parse(e.data);
-        setStatusMessages(prev => [...prev, evt.message]);
-
-        // Detect completion or error
-        if (evt.message?.includes('Regeneration complete')) {
-          es.close();
-          sseRef.current = null;
-          setTimeout(() => onSuccess(), 1500);
-        }
-        if (evt.level === 'error' && evt.message?.includes('Regeneration failed')) {
-          es.close();
-          sseRef.current = null;
-          // Extract the human-readable part after "Regeneration failed: "
-          const cleanMsg = evt.message.replace('Regeneration failed: ', '');
-          setErrorMessage(cleanMsg);
-          setPhase('error');
-        }
-      } catch {}
-    };
-
-    // Trigger the regeneration
+    // Trigger the regeneration FIRST so the server clears old logs before SSE connects
     try {
       const res = await fetch(`/api/cases/${caseId}/regenerate/${table}`, {
         method: 'POST',
@@ -97,11 +72,40 @@ export default function RegenerateEditor({ caseId, table, onClose, onSuccess, ad
         throw new Error(data.error || 'Failed to start regeneration');
       }
     } catch (e: any) {
-      es.close();
-      sseRef.current = null;
       setErrorMessage(e.message || 'Failed to start regeneration');
       setPhase('error');
+      return;
     }
+
+    // Subscribe to SSE AFTER the regeneration request returns (logs are now cleared)
+    const es = new EventSource(`/api/cases/${caseId}/logs`);
+    sseRef.current = es;
+    const seenKeys = new Set<string>();
+    es.onmessage = (e) => {
+      try {
+        const evt = JSON.parse(e.data);
+        // Deduplicate replayed entries on reconnect
+        const key = `${evt.timestamp}|${evt.message}`;
+        if (seenKeys.has(key)) return;
+        seenKeys.add(key);
+
+        setStatusMessages(prev => [...prev, evt.message]);
+
+        // Detect completion or error
+        if (evt.message?.includes('Regeneration complete')) {
+          es.close();
+          sseRef.current = null;
+          setTimeout(() => onSuccess(), 1500);
+        }
+        if (evt.level === 'error' && evt.message?.includes('Regeneration failed')) {
+          es.close();
+          sseRef.current = null;
+          const cleanMsg = evt.message.replace('Regeneration failed: ', '');
+          setErrorMessage(cleanMsg);
+          setPhase('error');
+        }
+      } catch {}
+    };
   }, [caseId, table, promptText, onSuccess]);
 
   const loadHistoryEntry = (entry: HistoryEntry) => {
@@ -195,12 +199,10 @@ export default function RegenerateEditor({ caseId, table, onClose, onSuccess, ad
                   )}
 
                   {/* Prompt editor */}
-                  <textarea
+                  <MarkdownEditor
                     value={promptText}
-                    onChange={e => setPromptText(e.target.value)}
+                    onChange={setPromptText}
                     rows={24}
-                    className="w-full font-mono text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-4 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-none"
-                    spellCheck={false}
                   />
                 </>
               )}
