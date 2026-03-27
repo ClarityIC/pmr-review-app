@@ -9,7 +9,8 @@
  * Both paths:
  * 1. Apply absolute_page_offset to all page numbers and spatial coordinates.
  * 2. Ingest unified corpus into BigQuery as Table 0.
- * 3. Delete all staging chunks (input + output where applicable) — "one copy" rule.
+ * 3. Delete input staging chunks and local temp files.
+ *    (DocAI output scrubbing is deferred to the orchestrator after pipeline success.)
  */
 import { v4 as uuidv4 } from 'uuid';
 import { getStorage } from '../config.js';
@@ -22,7 +23,7 @@ import path from 'path';
 import fs from 'fs';
 
 export interface Step3Options {
-  skipOutputScrub?: boolean;
+  globalChunkOffset?: number; // Path 2 batched: starting index of this file's chunks in the global batch
 }
 
 export async function step3(
@@ -91,16 +92,21 @@ export async function step3(
 
     log('info', `[Step 3] Found ${ocrFiles.length} OCR output files, ${layoutFiles.length} Layout output files`);
 
-    // Index layout outputs by their source input URI
-    const layoutByInput = new Map<string, any>();
+    // Index layout outputs by inputDocumentIndex (parsed from output path)
+    // Path structure: {prefix}/{operationId}/{inputDocumentIndex}/{shard}.json
+    const layoutByInputIdx = new Map<number, any>();
     for (const f of layoutFiles) {
       if (!f.name.endsWith('.json')) continue;
       const [content] = await f.download();
       const doc = JSON.parse(content.toString('utf8'));
-      const inputUri = doc?.context?.documentId?.gcsUri || f.name;
-      layoutByInput.set(inputUri, doc);
+      const pathParts = f.name.split('/');
+      const inputIdx = parseInt(pathParts[pathParts.length - 2], 10);
+      if (!isNaN(inputIdx)) {
+        layoutByInputIdx.set(inputIdx, doc);
+      }
     }
 
+    const offset = options?.globalChunkOffset ?? 0;
     bqRows = [];
 
     for (const f of ocrFiles) {
@@ -109,9 +115,28 @@ export async function step3(
       const [content] = await f.download();
       const ocrDoc = JSON.parse(content.toString('utf8'));
 
-      const sourceUri = ocrDoc?.context?.documentId?.gcsUri || '';
-      const chunk = chunks.find(c => c.gcsUri === sourceUri);
-      if (!chunk) continue; // belongs to a different file's chunk — skip
+      // Parse inputDocumentIndex from output path structure:
+      // {prefix}/{operationId}/{inputIdx}/{shard}.json
+      const pathParts = f.name.split('/');
+      const inputIdx = parseInt(pathParts[pathParts.length - 2], 10);
+      const localIdx = inputIdx - offset;
+
+      let chunk: ChunkRef | undefined;
+
+      if (!isNaN(localIdx) && localIdx >= 0 && localIdx < chunks.length) {
+        // Primary: match via output path structure (most reliable)
+        chunk = chunks[localIdx];
+      } else {
+        // Fallback: try URI matching (for non-batched runs or different path structures)
+        const sourceUri = ocrDoc?.context?.documentId?.gcsUri || '';
+        chunk = chunks.find(c => c.gcsUri === sourceUri)
+          || chunks.find(c => decodeURIComponent(c.gcsUri) === decodeURIComponent(sourceUri));
+      }
+
+      if (!chunk) {
+        log('warn', `[Step 3] Skipping OCR output — no matching chunk. File: ${f.name}, inputIdx: ${inputIdx}, offset: ${offset}, sourceUri: ${ocrDoc?.context?.documentId?.gcsUri || '(empty)'}`);
+        continue;
+      }
 
       const chunkIndex = chunk.chunkIndex;
       const pageOffset = chunk.absolutePageOffset;
@@ -123,7 +148,7 @@ export async function step3(
         detectedLanguages: page.detectedLanguages,
       }));
 
-      const layoutDoc = layoutByInput.get(sourceUri);
+      const layoutDoc = layoutByInputIdx.get(inputIdx);
       const layoutChunks = layoutDoc?.chunkedDocument?.chunks || [];
 
       const adjustedLayoutChunks = layoutChunks.map((lc: any) => ({
@@ -155,6 +180,15 @@ export async function step3(
     }
   }
 
+  // ── Validation ─────────────────────────────────────────────────────────────
+  if (bqRows.length === 0 && chunks.length > 0) {
+    log('error', `[Step 3] CRITICAL: 0 rows produced from ${chunks.length} chunk(s). Output matching failed — check chunk URIs and output path structure.`);
+    throw new Error(`[Step 3] No rows produced — output-to-chunk matching failed for all ${chunks.length} chunk(s)`);
+  }
+  if (bqRows.length < chunks.length) {
+    log('warn', `[Step 3] Only ${bqRows.length}/${chunks.length} chunks matched output files. Some data may be missing.`);
+  }
+
   // Sort rows by chunk index before inserting
   bqRows.sort((a, b) => a.chunk_index - b.chunk_index);
 
@@ -162,27 +196,17 @@ export async function step3(
   await insertRows(bqRows);
   log('success', '[Step 3] BigQuery ingestion complete');
 
-  // ── Storage scrubbing: enforce the "one copy" rule ────────────────────────
-  log('info', '[Step 3] Scrubbing staging buckets (enforcing one-copy rule)');
+  // ── Scrub input staging chunks (DocAI outputs deferred to orchestrator) ───
+  log('info', '[Step 3] Scrubbing input staging chunks');
 
   const inputPrefix = `cases/${caseId}/${fileId}/chunks`;
-  // Always scrub this file's input staging chunks
   await deletePrefix(BUCKET_STAGING(), inputPrefix);
 
-  if (docaiResult.path === 'path2-async' && !options?.skipOutputScrub) {
-    // Scrub shared output prefixes (skipped when orchestrator handles it for batched runs)
-    const outputBucket = process.env.GCS_STAGING_OUTPUT_BUCKET || 'cic-docai-staging-outputs';
-    await Promise.all([
-      deletePrefix(outputBucket, docaiResult.ocrOutputPrefix),
-      deletePrefix(outputBucket, docaiResult.layoutOutputPrefix),
-    ]);
-  }
-
-  // Also delete local temp chunk files
+  // Delete local temp chunk files
   const tmpDir = path.join(process.cwd(), 'chunks', caseId, fileId);
   if (fs.existsSync(tmpDir)) {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 
-  log('success', '[Step 3] Storage scrubbing complete — only original PDF remains in GCS');
+  log('success', '[Step 3] Reassembly and ingestion complete');
 }

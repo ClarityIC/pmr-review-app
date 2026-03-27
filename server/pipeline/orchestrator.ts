@@ -275,25 +275,20 @@ export async function runPipeline(opts: RunOptions): Promise<void> {
       }
       await writeCheckpoint(caseId, checkpoint);
 
-      // Phase C: per-file step3 (skip output scrubbing — orchestrator handles it)
+      // Phase C: per-file step3
+      let chunkOffset = 0;
       for (let i = 0; i < fileResults.length; i++) {
         currentFileIndex = i;
         const fr = fileResults[i];
         currentStep = `Step 3 (reassembly + BigQuery ingestion — ${fr.fileName})`;
         if (isCancelled()) throw new Error('Processing was cancelled.');
-        await step3(fr.chunks, step2Result, caseId, fr.fileId, fr.fileName, log, { skipOutputScrub: true });
+        await step3(fr.chunks, step2Result, caseId, fr.fileId, fr.fileName, log, {
+          globalChunkOffset: chunkOffset,
+        });
+        chunkOffset += fr.chunks.length;
       }
 
-      // Phase D: scrub shared output prefixes once
-      if (step2Result.path === 'path2-async') {
-        log('info', '[Step 3] Scrubbing shared DocAI output staging');
-        await Promise.all([
-          deletePrefix(BUCKET_OUTPUT(), step2Result.ocrOutputPrefix),
-          deletePrefix(BUCKET_OUTPUT(), step2Result.layoutOutputPrefix),
-        ]);
-      }
-
-      // Checkpoint Step 3 complete
+      // Checkpoint Step 3 complete (DocAI output scrubbing deferred to after pipeline success)
       checkpoint.step3Complete = true;
       await writeCheckpoint(caseId, checkpoint);
 
@@ -396,6 +391,17 @@ export async function runPipeline(opts: RunOptions): Promise<void> {
     } as any);
 
     log('success', `Pipeline complete! Table 1: ${table1Rows.length} records, Table 2: ${table2Rows.length} conditions`);
+
+    // ── Final cleanup: scrub DocAI outputs now that pipeline succeeded ──────
+    if (checkpoint.ocrOutputPrefix || checkpoint.layoutOutputPrefix) {
+      log('info', 'Scrubbing DocAI output staging (pipeline complete)');
+      if (checkpoint.ocrOutputPrefix) {
+        await deletePrefix(BUCKET_OUTPUT(), checkpoint.ocrOutputPrefix).catch(() => {});
+      }
+      if (checkpoint.layoutOutputPrefix) {
+        await deletePrefix(BUCKET_OUTPUT(), checkpoint.layoutOutputPrefix).catch(() => {});
+      }
+    }
 
   } catch (err: any) {
     const msg = err?.message || String(err);
@@ -594,6 +600,7 @@ export async function resumePipeline(caseId: string): Promise<void> {
         layoutOutputPrefix: cp.layoutOutputPrefix!,
       };
 
+      let chunkOffset = 0;
       for (const file of caseData.files) {
         if (isCancelled()) throw new Error('Processing was cancelled.');
         const chunks = await listChunkRefs(caseId, file.id);
@@ -601,15 +608,11 @@ export async function resumePipeline(caseId: string): Promise<void> {
           log('warn', `[Resume] No staging chunks for file "${file.name}" — skipping (may already be scrubbed)`);
           continue;
         }
-        await step3(chunks, docaiResult, caseId, file.id, file.name, log, { skipOutputScrub: true });
+        await step3(chunks, docaiResult, caseId, file.id, file.name, log, {
+          globalChunkOffset: chunkOffset,
+        });
+        chunkOffset += chunks.length;
       }
-
-      // Scrub shared output prefixes
-      log('info', '[Resume] Scrubbing shared DocAI output staging');
-      await Promise.all([
-        deletePrefix(BUCKET_OUTPUT(), cp.ocrOutputPrefix!),
-        deletePrefix(BUCKET_OUTPUT(), cp.layoutOutputPrefix!),
-      ]);
 
       cp.step3Complete = true;
       await writeCheckpoint(caseId, cp);
@@ -667,6 +670,17 @@ export async function resumePipeline(caseId: string): Promise<void> {
     } as any);
 
     log('success', `Pipeline resumed and completed! Table 1: ${finalCase!.table1.length} records, Table 2: ${finalCase!.table2.length} conditions`);
+
+    // ── Final cleanup: scrub DocAI outputs now that pipeline succeeded ──────
+    if (cp.ocrOutputPrefix || cp.layoutOutputPrefix) {
+      log('info', 'Scrubbing DocAI output staging (pipeline complete)');
+      if (cp.ocrOutputPrefix) {
+        await deletePrefix(BUCKET_OUTPUT(), cp.ocrOutputPrefix).catch(() => {});
+      }
+      if (cp.layoutOutputPrefix) {
+        await deletePrefix(BUCKET_OUTPUT(), cp.layoutOutputPrefix).catch(() => {});
+      }
+    }
 
   } catch (err: any) {
     const msg = err?.message || String(err);
