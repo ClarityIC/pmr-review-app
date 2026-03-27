@@ -18,7 +18,7 @@ import { Log } from './orchestrator.js';
 
 const OCR_PROCESSOR_VERSION     = 'pretrained-ocr-v2.1-2024-08-07';
 const LAYOUT_PROCESSOR_VERSION  = 'pretrained-layout-parser-v1.6-2026-01-13';
-const LRO_POLL_INTERVAL_MS      = 10_000; // exactly 10 seconds — spec requirement
+const LRO_POLL_INTERVAL_MS      = 30_000; // 30 seconds
 
 function formatElapsed(totalSeconds: number): string {
   if (totalSeconds < 60) return `${Math.round(totalSeconds)}s`;
@@ -332,7 +332,7 @@ export async function pollLRO(docai: any, operationName: string, label: string, 
       if (op.error) {
         throw new Error(`[Step 2] ${label} LRO failed: ${JSON.stringify(op.error)}`);
       }
-      log('success', `[Step 2] ${label} processor completed successfully (${attempts} polls, ~${formatElapsed(attempts * 10)})`);
+      log('success', `[Step 2] ${label} processor completed successfully (~${formatElapsed(attempts * LRO_POLL_INTERVAL_MS / 1000)})`);
       return;
     }
 
