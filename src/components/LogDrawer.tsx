@@ -1,5 +1,5 @@
-import React from 'react';
-import { ChevronDown, ChevronUp, Activity } from 'lucide-react';
+import React, { useRef, useMemo } from 'react';
+import { ChevronDown, ChevronUp, Activity, ArrowUp, ArrowDown } from 'lucide-react';
 import { cn } from '../lib/utils.js';
 
 export interface LogEntry {
@@ -29,11 +29,19 @@ const LEVEL_TEXT: Record<LogEntry['level'], string> = {
 };
 
 export default function LogDrawer({ logs, isOpen, onToggle }: Props) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+
   const formatTime = (ts: string) => {
     try {
       return new Date(ts).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
     } catch { return ts; }
   };
+
+  const scrollToTop = () => scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+  const scrollToBottom = () => scrollRef.current?.scrollTo({ top: scrollRef.current!.scrollHeight, behavior: 'smooth' });
+
+  const successCount = useMemo(() => logs.filter(l => l.level === 'success').length, [logs]);
+  const errorCount = useMemo(() => logs.filter(l => l.level === 'error').length, [logs]);
 
   return (
     <div className="border-t border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
@@ -44,9 +52,37 @@ export default function LogDrawer({ logs, isOpen, onToggle }: Props) {
         <div className="flex items-center gap-2.5">
           <Activity className="w-4 h-4 text-slate-400" />
           <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Processing Log</span>
+          {isOpen && (
+            <>
+              <button
+                onClick={e => { e.stopPropagation(); scrollToTop(); }}
+                className="w-6 h-6 flex items-center justify-center rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                title="Scroll to top"
+              >
+                <ArrowUp className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={e => { e.stopPropagation(); scrollToBottom(); }}
+                className="w-6 h-6 flex items-center justify-center rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                title="Scroll to bottom"
+              >
+                <ArrowDown className="w-3.5 h-3.5" />
+              </button>
+            </>
+          )}
           {logs.length > 0 && (
             <span className="bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 text-xs px-2 py-0.5 rounded-full">
               {logs.length}
+            </span>
+          )}
+          {successCount > 0 && (
+            <span className="bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 text-xs px-2 py-0.5 rounded-full">
+              {successCount}
+            </span>
+          )}
+          {errorCount > 0 && (
+            <span className="bg-rose-100 dark:bg-rose-900/30 text-rose-600 dark:text-rose-400 text-xs px-2 py-0.5 rounded-full">
+              {errorCount}
             </span>
           )}
         </div>
@@ -54,7 +90,7 @@ export default function LogDrawer({ logs, isOpen, onToggle }: Props) {
       </button>
 
       {isOpen && (
-        <div className="h-56 overflow-y-auto bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800">
+        <div ref={scrollRef} className="h-56 overflow-y-auto bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800">
           {logs.length === 0 ? (
             <p className="font-mono text-xs text-slate-500 px-5 py-4">No log entries yet.</p>
           ) : (

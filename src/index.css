@@ -67,11 +67,12 @@
   inset: 0;
   overflow: hidden;
   pointer-events: none;
-  color: transparent; /* text invisible — only spans are colored */
+  color: theme(--color-slate-800);
   background: white;
 }
 .dark .md-editor-backdrop {
   background: theme(--color-slate-900);
+  color: theme(--color-slate-200);
 }
 
 .md-editor-textarea {
