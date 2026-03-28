@@ -769,7 +769,7 @@ app.post('/api/cases/:id/regenerate/:table', async (req: Request, res: Response)
     }
 
     const tableKey = req.params.table === 'table2' ? 'table2' : 'table1';
-    const { prompt } = req.body;
+    const { prompt, table1Version } = req.body;
     if (!prompt?.trim()) return res.status(400).json({ error: 'Prompt is required' });
 
     const user = (req as any).user;
@@ -777,7 +777,7 @@ app.post('/api/cases/:id/regenerate/:table', async (req: Request, res: Response)
     // Respond immediately — regeneration runs async
     res.status(202).json({ message: 'Regeneration started' });
 
-    regenerateTable(req.params.id, tableKey, prompt.trim(), user.email)
+    regenerateTable(req.params.id, tableKey, prompt.trim(), user.email, table1Version != null ? Number(table1Version) : undefined)
       .catch(e => console.error('[regenerate]', e));
   } catch (e: any) {
     res.status(500).json({ error: e.message });

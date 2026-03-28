@@ -44,6 +44,7 @@ export async function regenerateTable(
   table: 'table1' | 'table2',
   prompt: string,
   userEmail: string,
+  table1Version?: number,
 ): Promise<void> {
   const log = (level: LogLevel, message: string) => emitLog(caseId, level, message);
 
@@ -74,7 +75,15 @@ export async function regenerateTable(
       markdownTable = result.markdownTable;
     } else {
       // Table 2 needs Table 1 markdown as context
-      const t1Markdown = caseData.table1Markdown;
+      let t1Markdown: string | undefined;
+      if (table1Version != null && caseData.table1Versions?.length) {
+        const v = caseData.table1Versions.find((ver: any) => ver.version === table1Version);
+        if (!v?.markdownTable) throw new Error(`Table 1 version ${table1Version} not found or has no markdown.`);
+        t1Markdown = v.markdownTable;
+        log('info', `Using Table 1 version ${table1Version} as context for Table 2`);
+      } else {
+        t1Markdown = caseData.table1Markdown;
+      }
       if (!t1Markdown) {
         throw new Error('Table 1 markdown is not available. Please regenerate Table 1 first so Table 2 can reference it.');
       }

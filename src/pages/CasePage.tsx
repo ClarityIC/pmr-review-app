@@ -1113,6 +1113,8 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
             onClose={() => setRegenerateTarget(null)}
             onSuccess={() => { setRegenerateTarget(null); loadCase(); }}
             addError={addError}
+            table1Versions={caseData?.table1Versions}
+            table1ActiveVersion={caseData?.table1ActiveVersion}
           />
         )}
       </AnimatePresence>

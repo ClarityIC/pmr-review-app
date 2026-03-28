@@ -3,12 +3,19 @@ import { Loader2, ChevronDown, Clock, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import MarkdownEditor from './MarkdownEditor.js';
 
+interface T1VersionInfo {
+  version: number;
+  generatedAt: string;
+}
+
 interface Props {
   caseId: string;
   table: 'table1' | 'table2';
   onClose: () => void;
   onSuccess: () => void;
   addError: (msg: string) => void;
+  table1Versions?: T1VersionInfo[];
+  table1ActiveVersion?: number; // index into versions array (displayed version)
 }
 
 type Phase = 'editing' | 'regenerating' | 'error';
@@ -19,7 +26,7 @@ interface HistoryEntry {
   version: number;
 }
 
-export default function RegenerateEditor({ caseId, table, onClose, onSuccess, addError }: Props) {
+export default function RegenerateEditor({ caseId, table, onClose, onSuccess, addError, table1Versions, table1ActiveVersion }: Props) {
   const [promptText, setPromptText] = useState('');
   const [loading, setLoading] = useState(true);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
@@ -28,6 +35,9 @@ export default function RegenerateEditor({ caseId, table, onClose, onSuccess, ad
   const [statusMessages, setStatusMessages] = useState<string[]>([]);
   const [errorMessage, setErrorMessage] = useState('');
   const sseRef = useRef<EventSource | null>(null);
+  // Table 1 version selector (only used when regenerating Table 2)
+  const showT1Selector = table === 'table2' && table1Versions && table1Versions.length > 0;
+  const [selectedT1VersionIdx, setSelectedT1VersionIdx] = useState(0); // default to latest (index 0)
 
   const tableLabel = table === 'table1' ? 'Table 1: Medical Chronology' : 'Table 2: Patient Conditions';
 
@@ -65,7 +75,10 @@ export default function RegenerateEditor({ caseId, table, onClose, onSuccess, ad
       const res = await fetch(`/api/cases/${caseId}/regenerate/${table}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: promptText.trim() }),
+        body: JSON.stringify({
+          prompt: promptText.trim(),
+          ...(showT1Selector && table1Versions ? { table1Version: table1Versions[selectedT1VersionIdx].version } : {}),
+        }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({ error: 'Request failed' }));
@@ -195,6 +208,32 @@ export default function RegenerateEditor({ caseId, table, onClose, onSuccess, ad
                           </motion.div>
                         )}
                       </AnimatePresence>
+                    </div>
+                  )}
+
+                  {/* Table 1 version selector (only for Table 2 regen) */}
+                  {showT1Selector && table1Versions && (
+                    <div className="flex items-center gap-3">
+                      <label className="text-sm font-medium text-slate-600 dark:text-slate-400 whitespace-nowrap">
+                        Table 1 Reference:
+                      </label>
+                      <select
+                        value={selectedT1VersionIdx}
+                        onChange={e => setSelectedT1VersionIdx(Number(e.target.value))}
+                        className="flex-1 text-sm px-3 py-1.5 border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      >
+                        {table1Versions.map((v, i) => {
+                          const tags: string[] = [];
+                          if (i === 0) tags.push('Latest');
+                          if (i === (table1ActiveVersion ?? 0)) tags.push('Displayed');
+                          const suffix = tags.length > 0 ? ` (${tags.join(', ')})` : '';
+                          return (
+                            <option key={v.version} value={i}>
+                              Version {v.version} — {formatDateTime(v.generatedAt)}{suffix}
+                            </option>
+                          );
+                        })}
+                      </select>
                     </div>
                   )}
 
