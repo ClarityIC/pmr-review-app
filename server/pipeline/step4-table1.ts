@@ -45,6 +45,8 @@ export async function step4(
       break;
     } catch (e: any) {
       const msg = e?.message || '';
+      const detail = e?.errorDetails || e?.details || e?.response?.body || '';
+      const fullMsg = `${msg}${detail ? ' | detail: ' + JSON.stringify(detail) : ''}`;
       const isRetryable = e?.code === 'UND_ERR_HEADERS_TIMEOUT' ||
         e?.cause?.code === 'UND_ERR_HEADERS_TIMEOUT' ||
         msg.includes('fetch failed') ||
@@ -56,10 +58,11 @@ export async function step4(
         const delay = msg.includes('RESOURCE_EXHAUSTED') || msg.includes('429')
           ? attempt * 15_000   // longer backoff for rate limits
           : attempt * 5_000;
-        log('warn', `[Step 4] Gemini attempt ${attempt}/${MAX_GEMINI_ATTEMPTS} failed: ${e.message} — retrying in ${delay / 1000}s`);
+        log('warn', `[Step 4] Gemini attempt ${attempt}/${MAX_GEMINI_ATTEMPTS} failed: ${fullMsg} — retrying in ${delay / 1000}s`);
         await new Promise(r => setTimeout(r, delay));
         continue;
       }
+      log('error', `[Step 4] Gemini fatal error: ${fullMsg}`);
       throw e;
     }
   }

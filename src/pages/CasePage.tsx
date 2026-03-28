@@ -248,6 +248,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
   };
 
   const handleCancel = async () => {
+    if (!window.confirm('Are you sure? You will have to re-upload the files.')) return;
     setCancelling(true);
     try {
       const res = await fetch(`/api/cases/${id}/cancel`, { method: 'POST' });

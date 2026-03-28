@@ -68,6 +68,7 @@ export interface PipelineCheckpoint {
   step3Complete: boolean;
   ocrOutputPrefix?: string;    // Path 2 only
   layoutOutputPrefix?: string; // Path 2 only
+  fileChunkCounts?: Record<string, number>; // fileId → chunk count (for resume offset calc)
 }
 
 const COLLECTION = 'cases';

@@ -23,7 +23,7 @@ import { step5 } from './step5-table2.js';
 import { updateCase, addFileToCase, getCase, TableVersion } from '../cases.js';
 import type { PipelineCheckpoint } from '../cases.js';
 import { getFirestore, getDocAI } from '../config.js';
-import { BUCKET_AUTH, BUCKET_OUTPUT, deletePrefix, listChunkRefs } from '../gcs.js';
+import { BUCKET_AUTH, BUCKET_OUTPUT, BUCKET_STAGING, deletePrefix, listChunkRefs } from '../gcs.js';
 import { ensureTable0Exists, deleteCaseRows } from '../bigquery.js';
 
 export type LogLevel = 'info' | 'success' | 'error' | 'warn';
@@ -115,6 +115,19 @@ export async function cancelPipeline(caseId: string): Promise<void> {
   }
 
   await clearPersistedLRONames(caseId);
+
+  // Scrub all staging data — user explicitly cancelled, no resume needed
+  emitLog(caseId, 'info', 'Cleaning up staging data…');
+  const snap = await getFirestore().collection('cases').doc(caseId).get().catch(() => null);
+  const cp = snap?.data()?.pipelineCheckpoint as PipelineCheckpoint | null;
+  await deletePrefix(BUCKET_STAGING(), `cases/${caseId}/`).catch(() => {});
+  if (cp?.ocrOutputPrefix) {
+    await deletePrefix(BUCKET_OUTPUT(), cp.ocrOutputPrefix).catch(() => {});
+  }
+  if (cp?.layoutOutputPrefix) {
+    await deletePrefix(BUCKET_OUTPUT(), cp.layoutOutputPrefix).catch(() => {});
+  }
+
   // Clear checkpoint — user explicitly cancelled, don't resume on restart
   try {
     await getFirestore().collection('cases').doc(caseId)
@@ -255,6 +268,10 @@ export async function runPipeline(opts: RunOptions): Promise<void> {
 
       // All files chunked and registered — checkpoint Step 1 complete
       checkpoint.step1Complete = true;
+      checkpoint.fileChunkCounts = {};
+      for (const fr of fileResults) {
+        checkpoint.fileChunkCounts[fr.fileId] = fr.chunks.length;
+      }
       await writeCheckpoint(caseId, checkpoint);
 
       // Phase B: single batched step2 with all chunks from all files
@@ -392,15 +409,14 @@ export async function runPipeline(opts: RunOptions): Promise<void> {
 
     log('success', `Pipeline complete! Table 1: ${table1Rows.length} records, Table 2: ${table2Rows.length} conditions`);
 
-    // ── Final cleanup: scrub DocAI outputs now that pipeline succeeded ──────
-    if (checkpoint.ocrOutputPrefix || checkpoint.layoutOutputPrefix) {
-      log('info', 'Scrubbing DocAI output staging (pipeline complete)');
-      if (checkpoint.ocrOutputPrefix) {
-        await deletePrefix(BUCKET_OUTPUT(), checkpoint.ocrOutputPrefix).catch(() => {});
-      }
-      if (checkpoint.layoutOutputPrefix) {
-        await deletePrefix(BUCKET_OUTPUT(), checkpoint.layoutOutputPrefix).catch(() => {});
-      }
+    // ── Final cleanup: scrub all staging now that pipeline succeeded ─────────
+    log('info', 'Scrubbing staging data (pipeline complete)');
+    await deletePrefix(BUCKET_STAGING(), `cases/${caseId}/`).catch(() => {});
+    if (checkpoint.ocrOutputPrefix) {
+      await deletePrefix(BUCKET_OUTPUT(), checkpoint.ocrOutputPrefix).catch(() => {});
+    }
+    if (checkpoint.layoutOutputPrefix) {
+      await deletePrefix(BUCKET_OUTPUT(), checkpoint.layoutOutputPrefix).catch(() => {});
     }
 
   } catch (err: any) {
@@ -604,8 +620,10 @@ export async function resumePipeline(caseId: string): Promise<void> {
       for (const file of caseData.files) {
         if (isCancelled()) throw new Error('Processing was cancelled.');
         const chunks = await listChunkRefs(caseId, file.id);
+        const knownCount = cp.fileChunkCounts?.[file.id] ?? chunks.length;
         if (chunks.length === 0) {
-          log('warn', `[Resume] No staging chunks for file "${file.name}" — skipping (may already be scrubbed)`);
+          log('warn', `[Resume] No staging chunks for file "${file.name}" — skipping (already scrubbed, offset +${knownCount})`);
+          chunkOffset += knownCount;
           continue;
         }
         await step3(chunks, docaiResult, caseId, file.id, file.name, log, {
@@ -671,15 +689,14 @@ export async function resumePipeline(caseId: string): Promise<void> {
 
     log('success', `Pipeline resumed and completed! Table 1: ${finalCase!.table1.length} records, Table 2: ${finalCase!.table2.length} conditions`);
 
-    // ── Final cleanup: scrub DocAI outputs now that pipeline succeeded ──────
-    if (cp.ocrOutputPrefix || cp.layoutOutputPrefix) {
-      log('info', 'Scrubbing DocAI output staging (pipeline complete)');
-      if (cp.ocrOutputPrefix) {
-        await deletePrefix(BUCKET_OUTPUT(), cp.ocrOutputPrefix).catch(() => {});
-      }
-      if (cp.layoutOutputPrefix) {
-        await deletePrefix(BUCKET_OUTPUT(), cp.layoutOutputPrefix).catch(() => {});
-      }
+    // ── Final cleanup: scrub all staging now that pipeline succeeded ─────────
+    log('info', 'Scrubbing staging data (pipeline complete)');
+    await deletePrefix(BUCKET_STAGING(), `cases/${caseId}/`).catch(() => {});
+    if (cp.ocrOutputPrefix) {
+      await deletePrefix(BUCKET_OUTPUT(), cp.ocrOutputPrefix).catch(() => {});
+    }
+    if (cp.layoutOutputPrefix) {
+      await deletePrefix(BUCKET_OUTPUT(), cp.layoutOutputPrefix).catch(() => {});
     }
 
   } catch (err: any) {

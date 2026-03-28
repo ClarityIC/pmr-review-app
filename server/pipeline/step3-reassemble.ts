@@ -15,12 +15,9 @@
 import { v4 as uuidv4 } from 'uuid';
 import { getStorage } from '../config.js';
 import { insertRows, Table0Row } from '../bigquery.js';
-import { deletePrefix, BUCKET_STAGING } from '../gcs.js';
 import { ChunkRef } from './step1-chunk.js';
 import { DocAIResult } from './step2-docai.js';
 import { Log } from './orchestrator.js';
-import path from 'path';
-import fs from 'fs';
 
 export interface Step3Options {
   globalChunkOffset?: number; // Path 2 batched: starting index of this file's chunks in the global batch
@@ -195,18 +192,6 @@ export async function step3(
   log('info', `[Step 3] Inserting ${bqRows.length} rows into BigQuery Table 0`);
   await insertRows(bqRows);
   log('success', '[Step 3] BigQuery ingestion complete');
-
-  // ── Scrub input staging chunks (DocAI outputs deferred to orchestrator) ───
-  log('info', '[Step 3] Scrubbing input staging chunks');
-
-  const inputPrefix = `cases/${caseId}/${fileId}/chunks`;
-  await deletePrefix(BUCKET_STAGING(), inputPrefix);
-
-  // Delete local temp chunk files
-  const tmpDir = path.join(process.cwd(), 'chunks', caseId, fileId);
-  if (fs.existsSync(tmpDir)) {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  }
 
   log('success', '[Step 3] Reassembly and ingestion complete');
 }
