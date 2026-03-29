@@ -427,22 +427,19 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
 
   // Pipeline step checklist — derived from checkpoint flags + table presence
   type StepStatus = 'done' | 'active' | 'pending' | 'error';
-  const pipelineSteps: { label: string; status: StepStatus }[] = useMemo(() => {
-    const cp = caseData.pipelineCheckpoint;
-    const isErr = caseData.status === 'error';
-    const s1 = !!cp?.step1Complete, s2 = !!cp?.step2Complete, s3 = !!cp?.step3Complete;
-    const s4 = (caseData.table1?.length ?? 0) > 0;
-    const s5 = (caseData.table2?.length ?? 0) > 0;
-    const st = (done: boolean, prev: boolean): StepStatus =>
-      done ? 'done' : !prev ? 'pending' : isErr ? 'error' : 'active';
-    return [
-      { label: 'Upload & chunk PDFs',          status: st(s1, true) },
-      { label: 'OCR + Layout parsing',          status: st(s2, s1)  },
-      { label: 'Reassemble & ingest',           status: st(s3, s2)  },
-      { label: 'Generate Medical Chronology',   status: st(s4, s3)  },
-      { label: 'Generate Patient Conditions',   status: st(s5, s4)  },
-    ];
-  }, [caseData.pipelineCheckpoint, caseData.status, caseData.table1, caseData.table2]);
+  const cp = caseData.pipelineCheckpoint;
+  const isErr = caseData.status === 'error';
+  const _s1 = !!cp?.step1Complete, _s2 = !!cp?.step2Complete, _s3 = !!cp?.step3Complete;
+  const _s4 = (caseData.table1?.length ?? 0) > 0, _s5 = (caseData.table2?.length ?? 0) > 0;
+  const _st = (done: boolean, prev: boolean): StepStatus =>
+    done ? 'done' : !prev ? 'pending' : isErr ? 'error' : 'active';
+  const pipelineSteps: { label: string; status: StepStatus }[] = [
+    { label: 'Upload & chunk PDFs',          status: _st(_s1, true) },
+    { label: 'OCR + Layout parsing',          status: _st(_s2, _s1) },
+    { label: 'Reassemble & ingest',           status: _st(_s3, _s2) },
+    { label: 'Generate Medical Chronology',   status: _st(_s4, _s3) },
+    { label: 'Generate Patient Conditions',   status: _st(_s5, _s4) },
+  ];
 
   const PipelineChecklist = () => (
     <ol className="flex flex-col gap-1.5">
