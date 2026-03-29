@@ -117,6 +117,11 @@ export async function getCaseText(caseId: string): Promise<string> {
 
   const sections: string[] = [];
   let currentFile = '';
+  // Deduplicate layout chunks by chunkId across rows. When DocAI shards OCR
+  // output into multiple files per chunk, older pipeline runs may have stored
+  // the full document's layout data in every shard row. Deduplication here
+  // makes those cases recoverable without re-running the full pipeline.
+  const seenLayoutChunkIds = new Set<string>();
 
   for (const row of rows) {
     const fileName = row.file_name || 'Unknown file';
@@ -133,6 +138,11 @@ export async function getCaseText(caseId: string): Promise<string> {
 
     if (layoutChunks.length > 0) {
       for (const chunk of layoutChunks) {
+        const chunkId: string | undefined = chunk.chunkId;
+        if (chunkId) {
+          if (seenLayoutChunkIds.has(chunkId)) continue;
+          seenLayoutChunkIds.add(chunkId);
+        }
         const ps = chunk.pageSpan;
         const pageLabel = ps
           ? (ps.pageStart === ps.pageEnd

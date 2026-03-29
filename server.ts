@@ -753,8 +753,12 @@ app.post('/api/cases/:id/regenerate/:table', async (req: Request, res: Response)
   try {
     const caseRecord = await getCase(req.params.id);
     if (!caseRecord) return res.status(404).json({ error: 'Case not found' });
-    if (caseRecord.status !== 'complete') {
-      return res.status(400).json({ error: 'Case must be in "complete" status to regenerate a table.' });
+    // Allow regeneration if complete, or if error but DocAI + BQ ingestion
+    // finished (step3Complete) — table generation failed after good data existed.
+    const canRegen = caseRecord.status === 'complete' ||
+      (caseRecord.status === 'error' && caseRecord.pipelineCheckpoint?.step3Complete);
+    if (!canRegen) {
+      return res.status(400).json({ error: 'Case must be complete (or in error after successful ingestion) to regenerate a table.' });
     }
     if (caseRecord.regeneratingTable) {
       // Treat lock as stale if updatedAt is more than 10 minutes ago (e.g. server crashed, clear failed)

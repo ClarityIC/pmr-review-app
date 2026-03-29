@@ -145,6 +145,17 @@ export async function step3(
         detectedLanguages: page.detectedLanguages,
       }));
 
+      // Derive the true page range for this OCR shard from its page numbers.
+      // DocAI may shard a single chunk's OCR output into multiple JSON files
+      // (one per ~10-page range). page.pageNumber is 1-based within the full
+      // input chunk — NOT relative to the shard — so this is always correct.
+      const absStart = ocrPages.length > 0
+        ? Math.min(...ocrPages.map((p: any) => p.pageNumber))
+        : pageOffset + 1;
+      const absEnd = ocrPages.length > 0
+        ? Math.max(...ocrPages.map((p: any) => p.pageNumber))
+        : pageOffset + (ocrPages.length || chunk?.pageCount || 0);
+
       const layoutDoc = layoutByInputIdx.get(inputIdx);
       const layoutChunks = layoutDoc?.chunkedDocument?.chunks || [];
 
@@ -156,8 +167,15 @@ export async function step3(
         } : undefined,
       }));
 
-      const absStart = pageOffset + 1;
-      const absEnd   = pageOffset + (ocrPages.length || chunk?.pageCount || 0);
+      // Assign each layout chunk to the shard where it STARTS. This prevents
+      // the full document's layout data from being duplicated across every OCR
+      // shard row — which causes getCaseText to send N× the content to Gemini.
+      // Layout chunks without pageSpan (rare) are included in every shard row;
+      // getCaseText deduplicates them by chunkId.
+      const shardLayoutChunks = adjustedLayoutChunks.filter((lc: any) => {
+        if (!lc.pageSpan) return true;
+        return lc.pageSpan.pageStart >= absStart && lc.pageSpan.pageStart <= absEnd;
+      });
 
       bqRows.push({
         chunk_id:       uuidv4(),
@@ -168,7 +186,7 @@ export async function step3(
         abs_page_start: absStart,
         abs_page_end:   absEnd,
         raw_text:       ocrDoc.text || '',
-        layout_chunks:  JSON.stringify(adjustedLayoutChunks),
+        layout_chunks:  JSON.stringify(shardLayoutChunks),
         ocr_pages:      JSON.stringify(ocrPages),
         created_at:     new Date().toISOString(),
       });
