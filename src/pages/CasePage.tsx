@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   UploadCloud, Loader2, Download, ChevronLeft, ChevronRight, ChevronDown, X, Check,
-  PanelRightClose, PanelRightOpen, FileText, ArrowUp, AlertCircle, CheckCircle2, Play, StopCircle, RotateCcw,
+  PanelRightClose, PanelRightOpen, FileText, ArrowUp, AlertCircle, CheckCircle2, Circle, XCircle, Play, StopCircle, RotateCcw,
   ZoomIn, ZoomOut, Maximize2,
 } from 'lucide-react';
 import { Document, Page, pdfjs } from 'react-pdf';
@@ -419,6 +419,50 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
   const isProcessing = caseData.status === 'processing';
   const hasResults  = caseData.status === 'complete' && (caseData.table1?.length > 0 || caseData.table2?.length > 0);
   const hasError    = caseData.status === 'error';
+  // Allow regeneration for error cases where ingestion finished (step3Complete) —
+  // table generation failed after good BigQuery data was written, so we can
+  // skip DocAI entirely and just re-run Steps 4/5.
+  const canRegenerate = caseData.status === 'complete' ||
+    (caseData.status === 'error' && caseData.pipelineCheckpoint?.step3Complete);
+
+  // Pipeline step checklist — derived from checkpoint flags + table presence
+  type StepStatus = 'done' | 'active' | 'pending' | 'error';
+  const pipelineSteps: { label: string; status: StepStatus }[] = useMemo(() => {
+    const cp = caseData.pipelineCheckpoint;
+    const isErr = caseData.status === 'error';
+    const s1 = !!cp?.step1Complete, s2 = !!cp?.step2Complete, s3 = !!cp?.step3Complete;
+    const s4 = (caseData.table1?.length ?? 0) > 0;
+    const s5 = (caseData.table2?.length ?? 0) > 0;
+    const st = (done: boolean, prev: boolean): StepStatus =>
+      done ? 'done' : !prev ? 'pending' : isErr ? 'error' : 'active';
+    return [
+      { label: 'Upload & chunk PDFs',          status: st(s1, true) },
+      { label: 'OCR + Layout parsing',          status: st(s2, s1)  },
+      { label: 'Reassemble & ingest',           status: st(s3, s2)  },
+      { label: 'Generate Medical Chronology',   status: st(s4, s3)  },
+      { label: 'Generate Patient Conditions',   status: st(s5, s4)  },
+    ];
+  }, [caseData.pipelineCheckpoint, caseData.status, caseData.table1, caseData.table2]);
+
+  const PipelineChecklist = () => (
+    <ol className="flex flex-col gap-1.5">
+      {pipelineSteps.map(({ label, status }, i) => (
+        <li key={i} className="flex items-center gap-2.5">
+          {status === 'done'    && <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />}
+          {status === 'active'  && <Loader2     className="w-4 h-4 text-indigo-500 animate-spin shrink-0" />}
+          {status === 'error'   && <XCircle     className="w-4 h-4 text-rose-500 shrink-0" />}
+          {status === 'pending' && <Circle      className="w-4 h-4 text-slate-300 dark:text-slate-600 shrink-0" />}
+          <span className={cn(
+            'text-sm',
+            status === 'done'    && 'text-slate-500 dark:text-slate-400',
+            status === 'active'  && 'text-slate-800 dark:text-slate-100 font-medium',
+            status === 'error'   && 'text-rose-700 dark:text-rose-400 font-medium',
+            status === 'pending' && 'text-slate-400 dark:text-slate-500',
+          )}>{label}</span>
+        </li>
+      ))}
+    </ol>
+  );
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col">
@@ -512,18 +556,31 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                   <div className="flex-1">
                     <p className="text-sm font-medium text-rose-800 dark:text-rose-300">Processing failed</p>
                     <p className="text-xs text-rose-600 dark:text-rose-400 mt-0.5">{caseData.errorMessage}</p>
-                    {caseData.files?.length > 0 ? (
-                      <button
-                        onClick={handleReprocess}
-                        disabled={reprocessing}
-                        className="mt-2 flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-50 rounded-lg transition-colors"
-                      >
-                        {reprocessing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />}
-                        {reprocessing ? 'Starting…' : 'Retry Processing'}
-                      </button>
-                    ) : (
-                      <p className="text-xs text-rose-500 mt-1">Upload the file again to retry.</p>
-                    )}
+                    <div className="mt-3 mb-3">
+                      <PipelineChecklist />
+                    </div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {canRegenerate && (
+                        <button
+                          onClick={() => setRegenerateTarget('table1')}
+                          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" /> Regenerate Tables
+                        </button>
+                      )}
+                      {caseData.files?.length > 0 ? (
+                        <button
+                          onClick={handleReprocess}
+                          disabled={reprocessing}
+                          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-50 rounded-lg transition-colors"
+                        >
+                          {reprocessing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />}
+                          {reprocessing ? 'Starting…' : 'Retry Processing'}
+                        </button>
+                      ) : (
+                        <p className="text-xs text-rose-500">Upload the file again to retry.</p>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}
@@ -683,7 +740,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
 
           {/* ── Processing view ── */}
           {isProcessing && (
-            <div className="p-6 flex flex-col items-center justify-center min-h-[200px] gap-4">
+            <div className="p-6 flex flex-col items-center justify-center min-h-[200px] gap-5">
               <Loader2 className="w-10 h-10 text-indigo-500 animate-spin" />
               <div className="text-center">
                 <p className="text-base font-semibold text-slate-900 dark:text-slate-100">Processing records…</p>
@@ -699,6 +756,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                   );
                 })()}
               </div>
+              <PipelineChecklist />
               <button
                 onClick={handleCancel}
                 disabled={cancelling}
@@ -780,7 +838,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                   />
                 )}
                 <div className="flex-1" />
-                {caseData.status === 'complete' && (
+                {canRegenerate && (
                   <button onClick={() => setRegenerateTarget('table1')} className="flex items-center gap-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-lg transition-colors shadow-sm">
                     <RotateCcw className="w-3.5 h-3.5" /> Regenerate Table...
                   </button>
@@ -885,7 +943,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                   />
                 )}
                 <div className="flex-1" />
-                {caseData.status === 'complete' && (
+                {canRegenerate && (
                   <button onClick={() => setRegenerateTarget('table2')} className="flex items-center gap-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-lg transition-colors shadow-sm">
                     <RotateCcw className="w-3.5 h-3.5" /> Regenerate Table...
                   </button>
