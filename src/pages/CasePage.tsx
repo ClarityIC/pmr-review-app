@@ -283,6 +283,23 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
     }
   };
 
+  const handleRegenerateBoth = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/cases/${id}/regenerate/tables`, { method: 'POST' });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        addError(d.error || 'Failed to start table regeneration');
+        return;
+      }
+      seenLogsRef.current.clear();
+      setLogs([]);
+      setLogDrawerOpen(true);
+      await loadCase(); // re-fetches; status is now 'processing' → SSE subscribes
+    } catch {
+      addError('Failed to start table regeneration');
+    }
+  }, [id, loadCase]);
+
   const onFilePick = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []);
     if (files.length) stageFiles(files);
@@ -417,8 +434,9 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
   if (!caseData) return null;
 
   const isProcessing = caseData.status === 'processing';
-  const hasResults  = caseData.status === 'complete' && (caseData.table1?.length > 0 || caseData.table2?.length > 0);
-  const hasError    = caseData.status === 'error';
+  const hasTableData = (caseData.table1?.length ?? 0) > 0 || (caseData.table2?.length ?? 0) > 0;
+  const hasResults   = (caseData.status === 'complete' || (caseData.status === 'error' && hasTableData)) && hasTableData;
+  const hasError     = caseData.status === 'error';
   // Allow regeneration for error cases where ingestion finished (step3Complete) —
   // table generation failed after good BigQuery data was written, so we can
   // skip DocAI entirely and just re-run Steps 4/5.
@@ -559,7 +577,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                     <div className="flex items-center gap-2 flex-wrap">
                       {canRegenerate && (
                         <button
-                          onClick={() => setRegenerateTarget('table1')}
+                          onClick={handleRegenerateBoth}
                           className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors"
                         >
                           <RotateCcw className="w-3.5 h-3.5" /> Regenerate Tables
@@ -764,6 +782,29 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                   : <StopCircle className="w-4 h-4" />}
                 {cancelling ? 'Cancelling…' : 'Cancel Processing'}
               </button>
+            </div>
+          )}
+
+          {/* ── Error banner (results view — error state but table data exists) ── */}
+          {hasResults && hasError && (
+            <div className="px-6 pt-4">
+              <div className="p-3 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 rounded-xl flex items-center gap-3">
+                <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-rose-800 dark:text-rose-300">Processing incomplete</p>
+                  {caseData.errorMessage && (
+                    <p className="text-xs text-rose-600 dark:text-rose-400 truncate mt-0.5">{caseData.errorMessage}</p>
+                  )}
+                </div>
+                {canRegenerate && (
+                  <button
+                    onClick={handleRegenerateBoth}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors shrink-0"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" /> Regenerate Tables
+                  </button>
+                )}
+              </div>
             </div>
           )}
 

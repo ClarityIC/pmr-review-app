@@ -26,7 +26,7 @@ import {
 import { signedWriteUrl, getBucketUsageBytes, listObjects, deletePrefix, deleteObject, downloadFile, BUCKET_AUTH, BUCKET_STAGING, BUCKET_OUTPUT } from './server/gcs.js';
 import { deleteCaseRows, deleteOrphanRows } from './server/bigquery.js';
 import { runPipeline, resumePipeline, cancelPipeline, getActiveLRONames, getPersistedLRONames, FileInput } from './server/pipeline/orchestrator.js';
-import { regenerateTable } from './server/pipeline/regenerate.js';
+import { regenerateTable, regenerateBothTables } from './server/pipeline/regenerate.js';
 import { runPreflight } from './server/preflight.js';
 import { DEFAULT_TABLE1_PROMPT, DEFAULT_TABLE2_PROMPT } from './server/pipeline/prompts.js';
 
@@ -743,6 +743,31 @@ app.get('/api/cases/:id/prompts/:table', async (req: Request, res: Response) => 
       }));
 
     res.json({ prompt, source, history });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Regenerate both tables (error recovery) — sets status to 'processing' so CasePage SSE activates
+app.post('/api/cases/:id/regenerate/tables', async (req: Request, res: Response) => {
+  try {
+    const caseRecord = await getCase(req.params.id);
+    if (!caseRecord) return res.status(404).json({ error: 'Case not found' });
+
+    const canRegen = caseRecord.status === 'complete' ||
+      (caseRecord.status === 'error' && caseRecord.pipelineCheckpoint?.step3Complete);
+    if (!canRegen) return res.status(400).json({ error: 'Case not eligible for table regeneration.' });
+
+    if (caseRecord.regeneratingTable) return res.status(409).json({ error: 'Already regenerating.' });
+
+    const user = (req as any).user;
+
+    // Set to 'processing' so CasePage subscribes to SSE and shows the processing spinner
+    await updateCase(req.params.id, { status: 'processing' });
+    res.status(202).json({ message: 'Table regeneration started' });
+
+    regenerateBothTables(req.params.id, user.email)
+      .catch(e => console.error('[regenerate/tables]', e));
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }

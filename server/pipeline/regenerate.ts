@@ -2,6 +2,9 @@
  * Table regeneration — re-runs Step 4 or Step 5 with a custom prompt
  * for a single case, creating a new version entry.
  *
+ * Also exports regenerateBothTables() which re-runs both steps sequentially
+ * and sets the case status to 'complete' when done (used for error recovery).
+ *
  * Reuses existing step4/step5 functions and the SSE log mechanism.
  * Case stays 'complete' even on error (regen failures are non-destructive).
  */
@@ -37,6 +40,66 @@ function ensureVersionHistory(
     generatedAt: caseData.dateProcessed || caseData.updatedAt || new Date().toISOString(),
     generatedBy: caseData.createdBy || 'unknown',
   }];
+}
+
+/**
+ * Regenerate both Table 1 and Table 2 sequentially using the case's stored
+ * prompts, then set status = 'complete'. Used for error-recovery when
+ * ingestion succeeded but table generation failed.
+ *
+ * The caller must set status = 'processing' before calling this so that the
+ * CasePage SSE subscription activates and the processing spinner shows.
+ */
+export async function regenerateBothTables(caseId: string, userEmail: string): Promise<void> {
+  const log = (level: LogLevel, message: string) => emitLog(caseId, level, message);
+  try {
+    await getFirestore().collection('cases').doc(caseId)
+      .update({ processingLogs: [] }).catch(() => {});
+
+    const caseData = await getCase(caseId);
+    if (!caseData) throw new Error('Case not found');
+
+    log('info', 'Regenerating Table 1 (Medical Chronology)…');
+    const { rows: table1Rows, markdownTable: table1Md } = await step4(caseId, caseData.table1Prompt, log);
+    await updateCase(caseId, { table1: table1Rows, table1Markdown: table1Md });
+
+    log('info', 'Regenerating Table 2 (Patient Conditions)…');
+    const { rows: table2Rows, markdownTable: table2Md } = await step5(caseId, table1Md, caseData.table2Prompt, log);
+
+    const now = new Date().toISOString();
+    const t1Versions = ensureVersionHistory(caseData, 'table1');
+    const t2Versions = ensureVersionHistory(caseData, 'table2');
+    const t1NextVer = t1Versions.length > 0 ? t1Versions[0].version + 1 : 1;
+    const t2NextVer = t2Versions.length > 0 ? t2Versions[0].version + 1 : 1;
+
+    const t1Version: TableVersion = {
+      version: t1NextVer, rows: table1Rows, markdownTable: table1Md,
+      prompt: caseData.table1Prompt || 'default', generatedAt: now, generatedBy: userEmail,
+    };
+    const t2Version: TableVersion = {
+      version: t2NextVer, rows: table2Rows, markdownTable: table2Md,
+      prompt: caseData.table2Prompt || 'default', generatedAt: now, generatedBy: userEmail,
+    };
+
+    await updateCase(caseId, {
+      status: 'complete',
+      table1: table1Rows, table1Markdown: table1Md,
+      table2: table2Rows, table2Markdown: table2Md,
+      table1Versions: [t1Version, ...t1Versions],
+      table2Versions: [t2Version, ...t2Versions],
+      table1ActiveVersion: 0,
+      table2ActiveVersion: 0,
+      dateProcessed: now,
+      errorMessage: null,
+    } as any);
+
+    log('success', `Pipeline complete! Table 1: ${table1Rows.length} records, Table 2: ${table2Rows.length} conditions`);
+  } catch (err: any) {
+    const msg = err?.message || String(err);
+    log('error', `Table generation failed: ${msg}`);
+    await updateCase(caseId, { status: 'error', errorMessage: msg }).catch(() => {});
+    throw err;
+  }
 }
 
 export async function regenerateTable(
