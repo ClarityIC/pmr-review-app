@@ -6,6 +6,7 @@ import { cn } from '../lib/utils.js';
 interface TableVersion {
   version: number;
   generatedAt: string;
+  rows?: any[];
 }
 
 interface Props {
@@ -18,12 +19,13 @@ interface Props {
 
 function formatVersionDate(iso: string): string {
   const d = new Date(iso);
-  const dd = String(d.getDate()).padStart(2, '0');
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const yy = String(d.getFullYear()).slice(2);
-  const hh = String(d.getHours()).padStart(2, '0');
-  const min = String(d.getMinutes()).padStart(2, '0');
-  return `${dd}-${mm}-${yy} ${hh}:${min}`;
+  const pt = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Los_Angeles',
+    month: 'numeric', day: 'numeric', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(d);
+  const p = (type: string) => pt.find(v => v.type === type)?.value || '';
+  return `${p('month')}-${p('day')}-${p('year')} ${p('hour')}:${p('minute')} PT`;
 }
 
 export default function VersionDropdown({ caseId, table, versions, activeVersionIndex, onVersionChange }: Props) {
@@ -59,7 +61,7 @@ export default function VersionDropdown({ caseId, table, versions, activeVersion
         disabled={activating}
         className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 px-2.5 py-1.5 border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-900 transition-colors disabled:opacity-50"
       >
-        Version {activeVersion.version} — {formatVersionDate(activeVersion.generatedAt)}
+        Version {activeVersion.version} — {formatVersionDate(activeVersion.generatedAt)}{activeVersion.rows?.length != null ? ` (${activeVersion.rows.length} records)` : ''}
         <ChevronDown className="w-3 h-3" />
       </button>
       <AnimatePresence>
@@ -85,7 +87,7 @@ export default function VersionDropdown({ caseId, table, versions, activeVersion
                     )}
                   >
                     <span className={cn(isCurrent && 'font-bold text-slate-900 dark:text-slate-100')}>
-                      Version {v.version} — {formatVersionDate(v.generatedAt)}
+                      Version {v.version} — {formatVersionDate(v.generatedAt)}{v.rows?.length != null ? ` (${v.rows.length} records)` : ''}
                       {isCurrent && <span className="ml-1.5 text-indigo-600 dark:text-indigo-400">(Current)</span>}
                     </span>
                   </button>
