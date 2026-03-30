@@ -11,9 +11,10 @@ interface Props {
   onLogout: () => void;
   darkMode: boolean;
   onToggleDark: () => void;
+  pageTitle?: string;
 }
 
-export default function NavBar({ user, onLogout, darkMode, onToggleDark }: Props) {
+export default function NavBar({ user, onLogout, darkMode, onToggleDark, pageTitle }: Props) {
   const navigate = useNavigate();
   const location = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -39,7 +40,7 @@ export default function NavBar({ user, onLogout, darkMode, onToggleDark }: Props
               <ChevronRight className="w-3.5 h-3.5 text-slate-400 hidden sm:inline" />
               <button onClick={() => navigate('/cases')} className="text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors">Cases</button>
               <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
-              <span className="font-semibold text-slate-800 dark:text-slate-100">Case Review</span>
+              <span className="font-semibold text-slate-800 dark:text-slate-100">{pageTitle || 'Case Review'}</span>
             </>
           ) : (
             <>

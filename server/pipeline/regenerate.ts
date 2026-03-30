@@ -59,39 +59,57 @@ export async function regenerateBothTables(caseId: string, userEmail: string): P
     const caseData = await getCase(caseId);
     if (!caseData) throw new Error('Case not found');
 
-    log('info', 'Regenerating Table 1 (Medical Chronology)…');
-    const { rows: table1Rows, markdownTable: table1Md } = await step4(caseId, caseData.table1Prompt, log);
-    await updateCase(caseId, { table1: table1Rows, table1Markdown: table1Md });
+    let table1Rows: any[];
+    let table1Md: string;
+    let t1Skipped = false;
 
-    log('info', 'Regenerating Table 2 (Patient Conditions)…');
+    if (caseData.table1?.length > 0 && caseData.table1Markdown) {
+      log('info', 'Table 1 already exists — skipping to Table 2');
+      table1Rows = caseData.table1;
+      table1Md = caseData.table1Markdown;
+      t1Skipped = true;
+    } else {
+      log('info', 'Generating Table 1 (Medical Chronology)…');
+      const result = await step4(caseId, caseData.table1Prompt, log);
+      table1Rows = result.rows;
+      table1Md = result.markdownTable;
+      await updateCase(caseId, { table1: table1Rows, table1Markdown: table1Md });
+    }
+
+    log('info', 'Generating Table 2 (Patient Conditions)…');
     const { rows: table2Rows, markdownTable: table2Md } = await step5(caseId, table1Md, caseData.table2Prompt, log);
 
     const now = new Date().toISOString();
-    const t1Versions = ensureVersionHistory(caseData, 'table1');
     const t2Versions = ensureVersionHistory(caseData, 'table2');
-    const t1NextVer = t1Versions.length > 0 ? t1Versions[0].version + 1 : 1;
     const t2NextVer = t2Versions.length > 0 ? t2Versions[0].version + 1 : 1;
-
-    const t1Version: TableVersion = {
-      version: t1NextVer, rows: table1Rows, markdownTable: table1Md,
-      prompt: caseData.table1Prompt || 'default', generatedAt: now, generatedBy: userEmail,
-    };
     const t2Version: TableVersion = {
       version: t2NextVer, rows: table2Rows, markdownTable: table2Md,
       prompt: caseData.table2Prompt || 'default', generatedAt: now, generatedBy: userEmail,
     };
 
-    await updateCase(caseId, {
+    const patch: Record<string, any> = {
       status: 'complete',
-      table1: table1Rows, table1Markdown: table1Md,
       table2: table2Rows, table2Markdown: table2Md,
-      table1Versions: [t1Version, ...t1Versions],
       table2Versions: [t2Version, ...t2Versions],
-      table1ActiveVersion: 0,
       table2ActiveVersion: 0,
       dateProcessed: now,
       errorMessage: null,
-    } as any);
+    };
+
+    if (!t1Skipped) {
+      const t1Versions = ensureVersionHistory(caseData, 'table1');
+      const t1NextVer = t1Versions.length > 0 ? t1Versions[0].version + 1 : 1;
+      const t1Version: TableVersion = {
+        version: t1NextVer, rows: table1Rows, markdownTable: table1Md,
+        prompt: caseData.table1Prompt || 'default', generatedAt: now, generatedBy: userEmail,
+      };
+      patch.table1 = table1Rows;
+      patch.table1Markdown = table1Md;
+      patch.table1Versions = [t1Version, ...t1Versions];
+      patch.table1ActiveVersion = 0;
+    }
+
+    await updateCase(caseId, patch as any);
 
     log('success', `Pipeline complete! Table 1: ${table1Rows.length} records, Table 2: ${table2Rows.length} conditions`);
   } catch (err: any) {

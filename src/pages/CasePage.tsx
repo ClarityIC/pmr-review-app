@@ -481,7 +481,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col">
-      <NavBar user={user} onLogout={onLogout} darkMode={darkMode} onToggleDark={onToggleDark} />
+      <NavBar user={user} onLogout={onLogout} darkMode={darkMode} onToggleDark={onToggleDark} pageTitle={caseData?.status === 'complete' ? 'Case Review' : 'Case Processing'} />
 
       {/* Success toast — persists until dismissed */}
       <AnimatePresence>
