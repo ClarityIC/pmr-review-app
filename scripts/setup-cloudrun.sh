@@ -147,22 +147,23 @@ gcloud run deploy "${SERVICE}" \
   --cpu=2 \
   --timeout=900 \
   --port=3000 \
-  --set-env-vars="NODE_ENV=production" \
+  --set-env-vars="\
+NODE_ENV=production,\
+GOOGLE_CLIENT_ID=643927424109-fapdkevkh88tobt5mti3cpbie212riva.apps.googleusercontent.com,\
+GCP_PROJECT_ID=cic-prior-records-review,\
+GCP_LOCATION=us,\
+GCS_AUTHORITATIVE_BUCKET=cic-authoritative-case-files,\
+GCS_STAGING_INPUT_BUCKET=cic-docai-staging-inputs,\
+GCS_STAGING_OUTPUT_BUCKET=cic-docai-staging-outputs,\
+BQ_DATASET=prr_data,\
+BQ_TABLE0=documents,\
+DOCAI_OCR_PROCESSOR_ID=26597dd107cedd1e,\
+DOCAI_LAYOUT_PROCESSOR_ID=9eede265724988da,\
+GEMINI_MODEL=gemini-3.1-pro-preview,\
+VERTEX_LOCATION=us-central1" \
   --set-secrets="\
-GOOGLE_CLIENT_ID=pmr-GOOGLE_CLIENT_ID:latest,\
-SESSION_SECRET=pmr-SESSION_SECRET:latest,\
 GCP_SA_KEY=pmr-GCP_SA_KEY:latest,\
-GCP_PROJECT_ID=pmr-GCP_PROJECT_ID:latest,\
-GCP_LOCATION=pmr-GCP_LOCATION:latest,\
-GCS_AUTHORITATIVE_BUCKET=pmr-GCS_AUTHORITATIVE_BUCKET:latest,\
-GCS_STAGING_INPUT_BUCKET=pmr-GCS_STAGING_INPUT_BUCKET:latest,\
-GCS_STAGING_OUTPUT_BUCKET=pmr-GCS_STAGING_OUTPUT_BUCKET:latest,\
-BQ_DATASET=pmr-BQ_DATASET:latest,\
-BQ_TABLE0=pmr-BQ_TABLE0:latest,\
-DOCAI_OCR_PROCESSOR_ID=pmr-DOCAI_OCR_PROCESSOR_ID:latest,\
-DOCAI_LAYOUT_PROCESSOR_ID=pmr-DOCAI_LAYOUT_PROCESSOR_ID:latest,\
-GEMINI_MODEL=pmr-GEMINI_MODEL:latest,\
-VERTEX_LOCATION=pmr-VERTEX_LOCATION:latest" \
+COOKIE_SECRET=pmr-SESSION_SECRET:latest" \
   --project="${PROJECT}" \
   --quiet
 
