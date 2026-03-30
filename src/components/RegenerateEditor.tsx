@@ -13,6 +13,7 @@ interface Props {
   table: 'table1' | 'table2';
   onClose: () => void;
   onSuccess: () => void;
+  onStarted: () => void;
   addError: (msg: string) => void;
   table1Versions?: T1VersionInfo[];
   table1ActiveVersion?: number; // index into versions array (displayed version)
@@ -26,7 +27,7 @@ interface HistoryEntry {
   version: number;
 }
 
-export default function RegenerateEditor({ caseId, table, onClose, onSuccess, addError, table1Versions, table1ActiveVersion }: Props) {
+export default function RegenerateEditor({ caseId, table, onClose, onSuccess, onStarted, addError, table1Versions, table1ActiveVersion }: Props) {
   const [promptText, setPromptText] = useState('');
   const [loading, setLoading] = useState(true);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
@@ -90,6 +91,9 @@ export default function RegenerateEditor({ caseId, table, onClose, onSuccess, ad
       return;
     }
 
+    // Notify CasePage so it subscribes to SSE in the LogDrawer
+    onStarted();
+
     // Subscribe to SSE AFTER the regeneration request returns (logs are now cleared)
     const es = new EventSource(`/api/cases/${caseId}/logs`);
     sseRef.current = es;
@@ -140,7 +144,7 @@ export default function RegenerateEditor({ caseId, table, onClose, onSuccess, ad
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
-      onClick={(e) => { if (e.target === e.currentTarget && phase === 'editing') onClose(); }}
+      onClick={(e) => { if (e.target === e.currentTarget && phase !== 'error') onClose(); }}
     >
       <motion.div
         initial={{ scale: 0.95, opacity: 0 }}
@@ -153,7 +157,7 @@ export default function RegenerateEditor({ caseId, table, onClose, onSuccess, ad
           <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
             Regenerate {tableLabel}
           </h2>
-          {phase === 'editing' && (
+          {phase !== 'error' && (
             <button onClick={onClose} className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors">
               <X className="w-5 h-5" />
             </button>

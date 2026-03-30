@@ -72,8 +72,9 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
   // Success toast
   const [successToast, setSuccessToast] = useState<string | null>(null);
 
-  // Regeneration overlay
+  // Regeneration
   const [regenerateTarget, setRegenerateTarget] = useState<'table1' | 'table2' | null>(null);
+  const [regenToast, setRegenToast] = useState<string | null>(null);
 
   // PDF Viewer
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
@@ -115,7 +116,8 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
 
   useEffect(() => {
     if (!caseData) return;
-    if (caseData.status !== 'processing') return;
+    const shouldSubscribe = caseData.status === 'processing' || !!caseData.regeneratingTable;
+    if (!shouldSubscribe) return;
 
     let disposed = false;
 
@@ -141,6 +143,12 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
             setSuccessToast(caseData?.patientName || 'The report');
           }, 2000);
           es.close();
+        } else if (entry.message.includes('Regeneration complete')) {
+          // Individual table rebuild finished
+          const detail = entry.message.replace('Regeneration complete! ', '');
+          setRegenToast(detail);
+          setTimeout(loadCase, 1500);
+          es.close();
         } else if (entry.level === 'error') {
           setTimeout(loadCase, 1500);
           es.close();
@@ -162,7 +170,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
       sseRef.current?.close();
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
     };
-  }, [caseData?.status, id]);
+  }, [caseData?.status, caseData?.regeneratingTable, id]);
 
   // ── File staging + upload ─────────────────────────────────────────────────
   const stageFiles = (files: File[]) => {
@@ -497,6 +505,37 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
             <button onClick={() => setSuccessToast(null)} className="text-emerald-400 hover:text-emerald-600 transition-colors shrink-0">
               <X className="w-4 h-4" />
             </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Regeneration complete toast */}
+      <AnimatePresence>
+        {regenToast && (
+          <motion.div
+            initial={{ opacity: 0, y: 24 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 24 }}
+            className="fixed bottom-6 right-6 z-50 flex items-start gap-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl shadow-lg px-4 py-3 max-w-md"
+          >
+            <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="text-sm font-medium">{regenToast}</p>
+              <div className="flex items-center gap-2 mt-2">
+                <button
+                  onClick={() => { setRegenToast(null); loadCase(); }}
+                  className="text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 px-3 py-1 rounded-lg transition-colors"
+                >
+                  Reload Page
+                </button>
+                <button
+                  onClick={() => setRegenToast(null)}
+                  className="text-xs font-semibold text-slate-500 hover:text-slate-700 px-3 py-1 rounded-lg border border-slate-200 hover:border-slate-300 transition-colors"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -877,7 +916,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                 )}
                 <div className="flex-1" />
                 {canRegenerate && (
-                  <button onClick={() => setRegenerateTarget('table1')} className="flex items-center gap-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-lg transition-colors shadow-sm">
+                  <button onClick={() => setRegenerateTarget('table1')} disabled={!!caseData.regeneratingTable} className="flex items-center gap-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2 rounded-lg transition-colors shadow-sm">
                     <RotateCcw className="w-3.5 h-3.5" /> Regenerate Table...
                   </button>
                 )}
@@ -982,7 +1021,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                 )}
                 <div className="flex-1" />
                 {canRegenerate && (
-                  <button onClick={() => setRegenerateTarget('table2')} className="flex items-center gap-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-lg transition-colors shadow-sm">
+                  <button onClick={() => setRegenerateTarget('table2')} disabled={!!caseData.regeneratingTable} className="flex items-center gap-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2 rounded-lg transition-colors shadow-sm">
                     <RotateCcw className="w-3.5 h-3.5" /> Regenerate Table...
                   </button>
                 )}
@@ -1208,6 +1247,12 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
             table={regenerateTarget}
             onClose={() => setRegenerateTarget(null)}
             onSuccess={() => { setRegenerateTarget(null); loadCase(); }}
+            onStarted={() => {
+              seenLogsRef.current.clear();
+              setLogs([]);
+              setLogDrawerOpen(true);
+              loadCase();
+            }}
             addError={addError}
             table1Versions={caseData?.table1Versions}
             table1ActiveVersion={caseData?.table1ActiveVersion}
