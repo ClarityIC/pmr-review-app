@@ -73,7 +73,7 @@ export default function VersionDropdown({ caseId, table, versions, activeVersion
               initial={{ opacity: 0, y: 4 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0 }}
-              className="absolute top-full mt-1 left-0 w-72 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl z-20 overflow-hidden max-h-64 overflow-y-auto"
+              className="absolute top-full mt-1 left-0 w-max min-w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl z-20 overflow-hidden max-h-64 overflow-y-auto"
             >
               {versions.map((v, i) => {
                 const isCurrent = i === activeVersionIndex;
@@ -86,9 +86,9 @@ export default function VersionDropdown({ caseId, table, versions, activeVersion
                       isCurrent && 'bg-indigo-50/50 dark:bg-indigo-900/20',
                     )}
                   >
-                    <span className={cn(isCurrent && 'font-bold text-slate-900 dark:text-slate-100')}>
+                    <span className={cn('whitespace-nowrap', isCurrent && 'font-bold text-slate-900 dark:text-slate-100')}>
                       Version {v.version} — {formatVersionDate(v.generatedAt)}{v.rows?.length != null ? ` (${v.rows.length} records)` : ''}
-                      {isCurrent && <span className="ml-1.5 text-indigo-600 dark:text-indigo-400">(Current)</span>}
+                      {isCurrent && <span className="ml-1.5 text-indigo-600 dark:text-indigo-400">(Viewing)</span>}
                     </span>
                   </button>
                 );
