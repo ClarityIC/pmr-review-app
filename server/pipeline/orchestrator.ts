@@ -441,7 +441,7 @@ export async function runPipeline(opts: RunOptions): Promise<void> {
       }
 
       console.error('[pipeline] Fatal error:', err);
-      const detailedMsg = `${currentStep || 'Pipeline'} failed on file "${files[currentFileIndex]?.fileName || 'unknown'}": ${msg}`;
+      const detailedMsg = `${currentStep || 'Pipeline'} failed on file "${files[currentFileIndex]?.fileName || 'unknown'}": ${friendlyGeminiError(msg)}`;
       await updateCase(caseId, { status: 'error', errorMessage: detailedMsg }).catch(() => {});
     }
   } finally {
@@ -706,7 +706,7 @@ export async function resumePipeline(caseId: string): Promise<void> {
     } else {
       log('error', `Resume failed during ${currentStep}: ${msg}`);
       console.error('[resume] Fatal error:', err);
-      await updateCase(caseId, { status: 'error', errorMessage: `Resume failed: ${msg}. Use "Retry Processing" to reprocess.` }).catch(() => {});
+      await updateCase(caseId, { status: 'error', errorMessage: `Resume failed: ${friendlyGeminiError(msg)}. Use "Retry Processing" to reprocess.` }).catch(() => {});
     }
   } finally {
     activeRuns.delete(caseId);
@@ -717,4 +717,18 @@ export async function resumePipeline(caseId: string): Promise<void> {
     if (!cp) clearPersistedLRONames(caseId);
     cancelledRuns.delete(caseId);
   }
+}
+
+/** Turn raw Gemini/Vertex AI errors into user-friendly messages. */
+function friendlyGeminiError(raw: string): string {
+  if (raw.includes('INVALID_ARGUMENT') && raw.includes('exceeds the maximum number of tokens')) {
+    return 'Gemini returned a transient token-limit error. This is usually temporary — please click "Regenerate Tables" to try again.';
+  }
+  if (raw.includes('RESOURCE_EXHAUSTED') || raw.includes('429')) {
+    return 'Gemini is temporarily overloaded (rate limit). Please wait a minute or two and click "Regenerate Tables" to try again.';
+  }
+  if (raw.includes('UNAVAILABLE') || raw.includes('DEADLINE_EXCEEDED') || raw.includes('fetch failed')) {
+    return 'Gemini was temporarily unavailable. This is usually transient — please click "Regenerate Tables" to try again.';
+  }
+  return raw;
 }

@@ -97,9 +97,23 @@ export async function regenerateBothTables(caseId: string, userEmail: string): P
   } catch (err: any) {
     const msg = err?.message || String(err);
     log('error', `Table generation failed: ${msg}`);
-    await updateCase(caseId, { status: 'error', errorMessage: msg }).catch(() => {});
+    await updateCase(caseId, { status: 'error', errorMessage: friendlyGeminiError(msg) }).catch(() => {});
     throw err;
   }
+}
+
+/** Turn raw Gemini/Vertex AI errors into user-friendly messages. */
+function friendlyGeminiError(raw: string): string {
+  if (raw.includes('INVALID_ARGUMENT') && raw.includes('exceeds the maximum number of tokens')) {
+    return 'Gemini returned a transient token-limit error. This is usually temporary — please click "Regenerate Tables" to try again.';
+  }
+  if (raw.includes('RESOURCE_EXHAUSTED') || raw.includes('429')) {
+    return 'Gemini is temporarily overloaded (rate limit). Please wait a minute or two and click "Regenerate Tables" to try again.';
+  }
+  if (raw.includes('UNAVAILABLE') || raw.includes('DEADLINE_EXCEEDED') || raw.includes('fetch failed')) {
+    return 'Gemini was temporarily unavailable. This is usually transient — please click "Regenerate Tables" to try again.';
+  }
+  return raw;
 }
 
 export async function regenerateTable(

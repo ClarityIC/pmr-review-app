@@ -570,7 +570,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                   <AlertCircle className="w-4 h-4 text-rose-500 mt-0.5 shrink-0" />
                   <div className="flex-1">
                     <p className="text-sm font-medium text-rose-800 dark:text-rose-300">Processing failed</p>
-                    <p className="text-xs text-rose-600 dark:text-rose-400 mt-0.5">{caseData.errorMessage}</p>
+                    <p className="text-xs text-rose-600 dark:text-rose-400 mt-0.5 break-all">{caseData.errorMessage}</p>
                     <div className="mt-3 mb-3">
                       <PipelineChecklist />
                     </div>
@@ -793,7 +793,7 @@ export default function CasePage({ user, onLogout, darkMode, onToggleDark, addEr
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-rose-800 dark:text-rose-300">Processing incomplete</p>
                   {caseData.errorMessage && (
-                    <p className="text-xs text-rose-600 dark:text-rose-400 truncate mt-0.5">{caseData.errorMessage}</p>
+                    <p className="text-xs text-rose-600 dark:text-rose-400 mt-0.5 break-words">{caseData.errorMessage}</p>
                   )}
                 </div>
                 {canRegenerate && (
