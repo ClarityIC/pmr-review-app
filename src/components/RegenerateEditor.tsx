@@ -251,12 +251,7 @@ export default function RegenerateEditor({ caseId, table, onClose, onSuccess, ad
           {/* Progress overlay */}
           {phase === 'regenerating' && (
             <div className="flex flex-col items-center justify-center py-12 space-y-6">
-              <div className="w-full max-w-md">
-                {/* Indeterminate progress bar */}
-                <div className="h-2 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
-                  <div className="h-full bg-indigo-500 rounded-full animate-pulse" style={{ width: '100%' }} />
-                </div>
-              </div>
+              <Loader2 className="w-10 h-10 text-indigo-500 animate-spin" />
               <div className="text-sm font-medium text-slate-700 dark:text-slate-300">
                 Regenerating {tableLabel}...
               </div>
