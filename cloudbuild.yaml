@@ -30,7 +30,7 @@ steps:
       - '--platform=managed'
       - '--timeout=3600'         # max request timeout (keeps SSE alive up to 1 hour)
       - '--no-cpu-throttling'    # CPU always allocated — background pipeline keeps running after HTTP response
-      - '--min-instances=1'      # never scale to zero — instance stays alive between requests
+      - '--min-instances=0'      # scale to zero when idle to save costs (cold start ~5-15s)
       - '--set-env-vars=NODE_ENV=production,GOOGLE_CLIENT_ID=643927424109-fapdkevkh88tobt5mti3cpbie212riva.apps.googleusercontent.com,GCP_PROJECT_ID=cic-prior-records-review,GCP_LOCATION=us,GCS_AUTHORITATIVE_BUCKET=cic-authoritative-case-files,GCS_STAGING_INPUT_BUCKET=cic-docai-staging-inputs,GCS_STAGING_OUTPUT_BUCKET=cic-docai-staging-outputs,BQ_DATASET=prr_data,BQ_TABLE0=documents,DOCAI_OCR_PROCESSOR_ID=26597dd107cedd1e,DOCAI_LAYOUT_PROCESSOR_ID=9eede265724988da,GEMINI_MODEL=gemini-3.1-pro-preview,VERTEX_LOCATION=us-central1'
       - '--set-secrets=GCP_SA_KEY=pmr-GCP_SA_KEY:latest,COOKIE_SECRET=pmr-SESSION_SECRET:latest'
       - '--quiet'
